@@ -364,7 +364,7 @@ def mutation_crossover(logger, population, hall, options):
             offspring[i - 1].fitness, offspring[i].fitness = -1000, -1000
 
     for i in range(len(offspring)):
-        recover_offspring_variable(offspring[i]) # 先对变量值进行必要的初始化
+        recover_offspring_variable(offspring[i]) # 
         if random.random() < mutpb:
 
             mutation_accepted = False
@@ -401,11 +401,11 @@ def recover_offspring_variable(offspring):
     offspring.result_suricata = None
     offspring.can_process_packet_compare = False
     offspring.inconsistent_packet_num = 0
-    offspring.change_happened_packet_num=[]  # 出现了状态不一致的packet编号(从0开始)
+    offspring.change_happened_packet_num=[]  # 
     offspring.terminate_by_server = False
     offspring.send_port_number = None
 
-    offspring.snort_state_change_overall_client=[]   # 记录的状态信息从头到尾，去重，总体看
+    offspring.snort_state_change_overall_client=[]   # 
     offspring.snort_state_change_overall_server=[]
     offspring.suricata_state_change_overall=[]
     offspring.saved_reason=''

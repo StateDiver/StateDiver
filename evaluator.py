@@ -213,7 +213,7 @@ class Evaluator():
                 ind.result_snort,ind.snort_state_change_overall_client,ind.snort_state_change_overall_server,success=state_change_analyze_snort(classify_log_per_packet_snort[port_number])
                 ind.result_suricata,ind.suricata_state_change_overall,success=state_change_analyze_suricata(classify_log_per_packet_suricata[port_number])
             except KeyError as err:
-                ind.useless = True  # it can't be undone 由于checksum 我们不要这个例子了 
+                ind.useless = True  # it can't be undone 
         return ind_list
 
     def run_test(self, environment, ind):
@@ -549,17 +549,17 @@ class Evaluator():
         """
         self.logger.debug(" ".join(command))
         try:
-            if actions.utils.get_console_log_level() == "debug":  # [3.23暂停] [4.25恢复]
+            if actions.utils.get_console_log_level() == "debug":  # 
                 tick0=time.time()
                 # fill the blank of command_string
                 #command[26]='0'
                 #command[28]='0'
                 #command[30]='test'
                 #command[32]='test'
-                #[with/without 两者启用一个即可]
+                
                 # without log-on-success
                 # command[32]='test'  # --injected-http-contains
-                # #command[34]='test'  # --environment_id 应该是ID 不能是test
+                # #command[34]='test'  # --environment_id 
                 # command[34]=self.server_args.get('environment_id')
                 
                 # with log-on-success
@@ -580,7 +580,7 @@ class Evaluator():
                 tick1=time.time()
                 print('subprocess time cost:',tick1-tick0)
 
-            # if actions.utils.get_console_log_level() == "debug":  #[3.23 原来的版本]
+            # if actions.utils.get_console_log_level() == "debug":  
             #     try:
             #         subprocess.call(command,timeout=1.2) # 0.6   0.8
             #     except:
@@ -1325,11 +1325,11 @@ def get_args(cmd, single_use=False):
 
 def get_tail_checkpoint(filename):
     with open(filename) as f:
-        f.seek(0,2)  # 移动到文件尾部
+        f.seek(0,2)  
         checkpoint=f.tell()
     return checkpoint
 
-# 从Snort的log信息中提取状态信息并且整理成文件
+
 
 class Packet_and_State_change:
     def __init__(self) -> None:
@@ -1339,7 +1339,7 @@ class Packet_and_State_change:
         self.client_state_change_uniq=[]
         self.server_state_change_uniq=[]
         self.state_change=[]
-        self.client_end_stage=''  #说明当前报文经过以后的结束状态
+        self.client_end_stage=''  
         self.server_end_stage=''
         self.end_stage=''
         self.change_happened=False
@@ -1360,7 +1360,7 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
     """
     begin_str='snort_stream_tcp.c:5908' #Got TCP Packet...
     raw_log_per_packet=[]
-    classify_log_per_packet={}  # 字典 最后的格式是 {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
+    classify_log_per_packet={}  # {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
     log_file_name='/mnt/hgfs/share-folders/snort-log/console.log'
     #log_file_name='D:\Virtual Machines\share-folders\snort-log\console.log'
     with open(log_file_name,'r') as f:
@@ -1372,7 +1372,7 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
     #print('total log len:', len(all_the_log))
 
     while (len(all_the_log)!=0):
-        right=all_the_log.find(begin_str,1)  #从第一个之后开始找
+        right=all_the_log.find(begin_str,1)  
         if right==-1:
             raw_log_per_packet.append(all_the_log)
             break
@@ -1380,9 +1380,9 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
         raw_log_per_packet.append(per_log)
         all_the_log=all_the_log[right:]
 
-    #筛选出当前报文的所有内容 加入到中间
+    
     for log in raw_log_per_packet:
-        # 提取出 0x........:.. -> 0x........:.....的内容
+        
         raw_port_info=re.findall('0x[0-9ABCDEF]{1,}:[0-9]{1,}',log)
         port_number=None
         for item in raw_port_info:
@@ -1395,9 +1395,9 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
         else:
             classify_log_per_packet[port_number]=[]
             classify_log_per_packet[port_number].append(log)
-        # 根据：后面的值，除掉80的 将当前内容加入到key值为另一个(如44618)的classify_log_per_packet中
+        
     return classify_log_per_packet
- #可能要拆成两个函数 原来的函数到这里就return
+
 
 def state_change_analyze_snort(raw_log_per_packet):
     result=[]
@@ -1409,14 +1409,14 @@ def state_change_analyze_snort(raw_log_per_packet):
     for log in raw_log_per_packet:
         #print(log)
         temp=Packet_and_State_change()
-        #处理到达的报文
+        
         #print("log:",log)
         try:
             temp.packet=re.findall('Got TCP Packet [\S|\s]*dsize: [0-9]*',log)[0][15:]
         except IndexError as err:
             return None,None,None, False
 
-        #处理client和server的所有状态
+        
         for match in re.finditer(client_re_string,log):
             state_string=match.group()
             temp.client_state_change.append(re.findall(state_re_string,state_string)[0])
@@ -1425,14 +1425,14 @@ def state_change_analyze_snort(raw_log_per_packet):
             state_string=match.group()
             temp.server_state_change.append(re.findall(state_re_string,state_string)[0])
         
-        #状态去重
+        
         for item in temp.client_state_change:
             if not item in temp.client_state_change_uniq:
                 temp.client_state_change_uniq.append(item)
         for item in temp.server_state_change:
             if not item in temp.server_state_change_uniq:
                 temp.server_state_change_uniq.append(item)
-        #状态添加到general的变量中 之后return
+        
         for item in temp.client_state_change_uniq:
             if snort_state_change_overall_client==[]:
                 snort_state_change_overall_client.append(item)
@@ -1448,7 +1448,7 @@ def state_change_analyze_snort(raw_log_per_packet):
         
         
 
-        # in order to be same with suricata change syn_sent to [none,syn_sent] 有问题 需要修改 [3.21]取消这步骤 先做自己不要迎合Suricata改变了
+        # in order to be same with suricata change syn_sent to [none,syn_sent] 
         # if len(temp.client_state_change_uniq)==1 and temp.client_state_change_uniq[0]=='SYN_SENT' and len(temp.server_state_change_uniq)==1 and temp.server_state_change_uniq[0]=='LISTEN':
         #     temp.client_state_change_uniq.insert(0,'NONE')
 
@@ -1460,7 +1460,7 @@ def state_change_analyze_snort(raw_log_per_packet):
         result.append(temp)
 
 
-        #整理end_stage信息
+        
     for i in range(len(result)):
         if result[i].client_end_stage=='':
             result[i].client_end_stage=result[i-1].client_end_stage
@@ -1526,7 +1526,7 @@ def state_change_analyze_suricata_prev(suricata_log_checkpoint):
     #print('total log len:', len(all_the_log))
 
     while (len(all_the_log)!=0):
-        right=all_the_log.find(begin_str,1)  #从第一个之后开始找 packet 0 is TCP. Direction
+        right=all_the_log.find(begin_str,1)  
         if right==-1:
             raw_log_per_packet.append(all_the_log) 
             break
@@ -1534,12 +1534,12 @@ def state_change_analyze_suricata_prev(suricata_log_checkpoint):
         raw_log_per_packet.append(per_log)
         all_the_log=all_the_log[right:]
     
-    #筛选出当前报文的所有内容 加入到中间
+   
     for log in raw_log_per_packet:
-        # 提取出 tcp port .....:..的内容
+       
         raw_port_info=re.findall('[0-9]{1,}:[0-9]{1,}',log)
         port_number=None
-        for item in raw_port_info:# 根据：后面的值，除掉80的 将当前内容加入到key值为另一个(如44618)的classify_log_per_packet中
+        for item in raw_port_info:
             temp=item[item.find(':')+1:]
             if temp!='80':
                 port_number=temp
@@ -1563,7 +1563,7 @@ def state_change_analyze_suricata(raw_log_per_packet):
     for log in raw_log_per_packet:
         #print(log)
         temp=Packet_and_State_change()
-        #处理到达的报文
+        
         #temp.packet=re.findall('packet 0 is TCP. Direction (TOSERVER|TOCLIENT),',log)[0]
         try:
             temp.packet = re.findall('packet 0 is TCP. Direction [A-Z]*, tcp port [0-9]*:[0-9]*',log)[0]
@@ -1571,8 +1571,8 @@ def state_change_analyze_suricata(raw_log_per_packet):
             return None,False
 
         #print(temp.packet)
-        #处理client和server的所有状态
-        #改成只用处理一次状态
+        
+        
         for match in re.finditer(state_change_re_string,log):  #state changed from xxx to xxx
             state_string=match.group()
             state_found=re.findall(state_re_string,state_string) #[none,syn_sent]
@@ -1585,7 +1585,7 @@ def state_change_analyze_suricata(raw_log_per_packet):
         result.append(temp)
 
 
-    # 补充end_stage信息
+    
     for i in range(0,len(result)):
         temp=result[i]
         if temp.end_stage=='':

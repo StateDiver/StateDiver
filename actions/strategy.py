@@ -21,25 +21,25 @@ class Strategy(object):
         self.result_suricata = None
         self.can_process_packet_compare = False
         self.inconsistent_packet_num = 0
-        self.change_happened_packet_num=[]  # 出现了状态不一致的packet编号(从0开始)
+        self.change_happened_packet_num=[]  # state-inconsistent packet num (start from zero)
         self.father_inconsistent_packet_num = 0
         self.terminate_by_server = False
         self.send_port_number = None  # mark which port is used to send the packet
 
-        self.snort_state_change_overall_client=[]   # 记录的状态信息从头到尾，去重，总体看
+        self.snort_state_change_overall_client=[]   
         self.snort_state_change_overall_server=[]
         self.suricata_state_change_overall=[]
         
         self.mutate_weight = 2  # use for fitness_function/(how many time this seed should mutate) 
         self.no_good_count = 0  # if no_good_count >=5 we delete this strategy
-        self.before_hash=[]   #对之前的状态迁移取哈希 如果都不满足则添加
-        self.before_hash_name=[]  #对之前的策略名取哈希
+        self.before_hash=[]   
+        self.before_hash_name=[]  
         self.father_snort_state_change_overall_client=[]
         self.father_snort_state_change_overall_server=[]
         self.father_suricata_state_change_overall=[]
-        #self.existence_time = 0 # 表明存在在队列中的次数 如果为0表示最新添加的child
+        #self.existence_time = 0 # 
         self.saved_reason = '0' # ++ -> very interesting  + -> little interesting
-        self.first_added_time = 1 # 第一次被加入的轮次  -> 展示第一次被加入的轮次，和目前已经在队列中存在的时间
+        self.first_added_time = 1 # 
 
 
     def __str__(self):

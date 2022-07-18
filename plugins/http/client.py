@@ -135,7 +135,7 @@ class HTTPClient(ClientPlugin):
                     break
         """
         try:
-            #res = requests.get(url, allow_redirects=False, timeout=3, headers=headers) # 会被捕获然后从另外的地方发送过去 engine发送的
+            #res = requests.get(url, allow_redirects=False, timeout=3, headers=headers) 
             req = urllib.request.Request(url, headers=headers)
             res = urllib.request.urlopen(req)
             logger.debug(res.code)  # 200  
@@ -178,29 +178,5 @@ class HTTPClient(ClientPlugin):
             logger.debug(exc)
             logger.exception("Exception caught in HTTP test to site %s. [Fitness-100]", url)
             fitness += -100
-        """
-        logger.debug("Change Bitmap name with environment_id")
-        bitmap_name='/mnt/hgfs/share-folders/bitmap/'+ args.get('environment_id')
-        with open(bitmap_name,'wb') as f:
-            f.write(open('/mnt/hgfs/share-folders/fuzz_bitmap','rb').read())
-        """
-        """
-        while True:
-            with open('/mnt/hgfs/share-folders/lock','r') as f:
-                lock=f.read(1)
-                if lock=='0':
-                    break
-               
-        #在这里做一些fitness和代码覆盖率的操作
-        logger.debug("Do Something with Bitmap")
-
-        bitmap_name='/mnt/hgfs/share-folders/bitmap/'+'bitmap'+str(random.randint(0,100))
-        with open(bitmap_name,'wb') as f:
-            f.write(open('/mnt/hgfs/share-folders/fuzz_bitmap','rb').read())
-    
-
-        with open('/mnt/hgfs/share-folders/lock', 'w') as f:
-            f.write('2\n')
-        """
 
         return fitness * 4
