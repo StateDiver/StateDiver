@@ -202,8 +202,6 @@ class Evaluator():
         time.sleep(2) # added  to be shrinked
         classify_log_per_packet_snort=state_change_analyze_snort_prev(snort_console_checkpoint)
         classify_log_per_packet_suricata=state_change_analyze_suricata_prev(suricata_console_checkpoint)
-        classify_snort_alert_group=alert_change_analyze_snort_group(snort_alert_checkpoint)
-        need_recover=False # debug switch to True
         for ind in ind_list:
             port_number=ind.send_port_number
             # deal with all drop strategy (can add some mark in Strategy later)
@@ -1343,10 +1341,7 @@ class Packet_and_State_change:
         self.server_end_stage=''
         self.end_stage=''
         self.change_happened=False
-        #self.client_init_state=''
-        #self.client_last_state=''
-        #self.server_init_state=''
-        #self.server_last_state=''
+
 
 def state_change_analyze_snort_prev(snort_log_checkpoint):
     """
@@ -1362,7 +1357,6 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
     raw_log_per_packet=[]
     classify_log_per_packet={}  # {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
     log_file_name='/mnt/hgfs/share-folders/snort-log/console.log'
-    #log_file_name='D:\Virtual Machines\share-folders\snort-log\console.log'
     with open(log_file_name,'r') as f:
         f.seek(snort_log_checkpoint)
         all_the_log=f.read()
@@ -1606,25 +1600,3 @@ def state_change_analyze_suricata(raw_log_per_packet):
 
     return result,suricata_state_change_overall,True
 
-def alert_change_analyze_snort_group(snort_alert_checkpoint):
-    """
-    analyze whether these cases has trigger snort alert
-
-    Args:
-        snort_alert_checkpoint (int): the end file descriptor number of the last-check of alert file
-
-    Returns:
-        has_alert (bool): whether strategy trigger alert
-        port_string (str): if trigger alert , return port string 
-    """
-    alert_filename='/mnt/hgfs/share-folders/snort-log/alert'
-    begin_str='192.168.111.128:'
-    alert_port=[]
-    with open(alert_filename,'r') as f:
-        f.seek(snort_alert_checkpoint)
-        all_log=f.read()
-    raw_alert_port=re.findall('192.168.111.128:[0-9]{1,}',all_log)
-    for item in raw_alert_port:
-        port_number_str=item[item.find(':')+1:]
-        alert_port.append(port_number_str)
-    return alert_port

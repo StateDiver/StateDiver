@@ -55,54 +55,6 @@ class HTTPClient(ClientPlugin):
         return super_args
 
     def run(self, args, logger, engine=None):
-        # """
-        # Try to make a forbidden GET request to the server.
-        # """
-        # fitness = 0
-        # url = args.get("server", "")
-        # assert url, "Cannot launch HTTP test with no server"
-        # if not url.startswith("http://"):
-        #     url = "http://" + url
-        # headers = {}
-        # if args.get('host_header'):
-        #     headers["Host"] = args.get('host_header')
-
-        # # If we've been given a non-standard port, append that to the URL
-        # port = args.get("port", 80)
-        # if port != 80:
-        #     url += ":%s" % str(port)
-
-        # if args.get("bad_word"):
-        #     url += "?q=%s" % args.get("bad_word")
-
-        # injected_http = args.get("injected_http_contains")
-        # try:
-        #     res = requests.get(url, allow_redirects=False, timeout=3, headers=headers)
-        #     logger.debug(res.text)
-        #     # If we need to monitor for an injected response, check that here
-        #     if injected_http and injected_http in res.text:
-        #         fitness -= 90
-        #     else:
-        #         fitness += 100
-        # except requests.exceptions.ConnectTimeout as exc:
-        #     logger.exception("Socket timeout.")
-        #     fitness -= 100
-        # except (requests.exceptions.ConnectionError, ConnectionResetError) as exc:
-        #     logger.exception("Connection RST.")
-        #     fitness -= 90
-        # except urllib.error.URLError as exc:
-        #     logger.debug(exc)
-        #     fitness += -101
-        # # Timeouts generally mean the strategy killed the TCP stream.
-        # # HTTPError usually mean the request was destroyed.
-        # # Punish this more harshly than getting caught by the censor.
-        # except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as exc:
-        #     logger.debug(exc)
-        #     fitness += -120
-        # except Exception:
-        #     logger.exception("Exception caught in HTTP test to site %s.", url)
-        #     fitness += -100
-        # return fitness * 4
         """
         Try to make a forbidden GET request to the server.
         """
@@ -127,13 +79,7 @@ class HTTPClient(ClientPlugin):
 
 
         injected_http = args.get("injected_http_contains")
-        """
-        while True:
-            with open('/mnt/hgfs/share-folders/lock','r') as f:
-                lock=f.read(1)
-                if lock=='1':
-                    break
-        """
+
         try:
             #res = requests.get(url, allow_redirects=False, timeout=3, headers=headers) 
             req = urllib.request.Request(url, headers=headers)

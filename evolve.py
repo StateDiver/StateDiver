@@ -484,7 +484,7 @@ def write_state_change(filename,population):
         # Write each individual to file
         fd.write('length of population:' + str(len(population)) + '\n')
         for index, individual in enumerate(population):
-            fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' Father_ID:' + str(individual.father_environment_id) + ' Cause_inconsistent:' + str(individual.father_inconsistent_packet_num)+ "\n")
+            fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' Cause_inconsistent:' + str(individual.father_inconsistent_packet_num)+ "\n")
             result=individual.result_snort
             #print(individual.result_snort)
             #print(individual.result_suricata)
@@ -521,7 +521,7 @@ def write_next_generation_info(filename,population,gen):
         no_good_count_analysis=[]
 
         for index, individual in enumerate(population):
-            fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' father_ID:[useless]' + str(individual.father_environment_id) )
+            fd.write(str(individual) + ' ID:' + str(individual.environment_id)  )
             if individual.first_added_time == gen:
                 child_count+=1
                 fd.write(' NEW\n')

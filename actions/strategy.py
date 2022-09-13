@@ -12,7 +12,6 @@ class Strategy(object):
 
         self.in_enabled = True
         self.out_enabled = True
-        self.father_environment_id = 'USELESS'
         self.environment_id = environment_id
         self.fitness = -1000
 
