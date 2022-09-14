@@ -12,35 +12,43 @@ class Strategy(object):
 
         self.in_enabled = True
         self.out_enabled = True
-        self.environment_id = environment_id
-        self.fitness = -1000
 
+        self.environment_id = environment_id
+        self.father_environment_id = None
+        self.fitness = -1000
+        
         #add state information
         self.result_snort = None
         self.result_suricata = None
         self.can_process_packet_compare = False
         self.inconsistent_packet_num = 0
-        self.change_happened_packet_num=[]  # state-inconsistent packet num (start from zero)
+        self.change_happened_packet_num=[]  # state-inconsistent packet num(start from zero)
         self.father_inconsistent_packet_num = 0
         self.terminate_by_server = False
         self.send_port_number = None  # mark which port is used to send the packet
 
-        self.snort_state_change_overall_client=[]   
+        self.snort_state_change_overall_client=[]  
         self.snort_state_change_overall_server=[]
         self.suricata_state_change_overall=[]
         
-        self.mutate_weight = 2  # use for fitness_function/(how many time this seed should mutate) 
+        self.mutate_weight = 2  # use for fitness_function/(how many time this seed should mutate)
         self.no_good_count = 0  # if no_good_count >=5 we delete this strategy
         self.before_hash=[]   
         self.before_hash_name=[]  
         self.father_snort_state_change_overall_client=[]
         self.father_snort_state_change_overall_server=[]
         self.father_suricata_state_change_overall=[]
-        #self.existence_time = 0 # 
+        #self.existence_time = 0 #
         self.saved_reason = '0' # ++ -> very interesting  + -> little interesting
-        self.first_added_time = 1 # 
+        self.first_added_time = 1 
 
-
+        self.useless = False 
+        self.depth = 0  
+        self.handicap = 0 
+        self.perf_score = 2000 
+        self.has_child = False 
+        self.was_fuzzed = False 
+        self.source_dict={"prior":0,"population":0} 
     def __str__(self):
         """
         Builds a string describing the action trees for this strategy.
@@ -69,6 +77,9 @@ class Strategy(object):
 
     def pretty_print(self):
         return "%s \n \/ \n %s" % (self.pretty_str_forest(self.out_actions), self.pretty_str_forest(self.in_actions))
+    
+    def pretty_print_partial(self):
+        return "%s \n \/ \n %s" % (self.pretty_str_forest_partial(self.out_actions), self.pretty_str_forest_partial(self.in_actions))
 
     def pretty_str_forest(self, forest):
         """
@@ -77,6 +88,15 @@ class Strategy(object):
         rep = ""
         for action_tree in forest:
             rep += "%s\n" % action_tree.pretty_print()
+        return rep
+
+    def pretty_str_forest_partial(self, forest):
+        """
+        Returns a string representation of a given forest (inbound or outbound)
+        """
+        rep = ""
+        for action_tree in forest:
+            rep += "%s\n" % action_tree.pretty_print_edit()
         return rep
 
     def initialize(self, logger, num_in_trees, num_out_trees, num_in_actions, num_out_actions, seed, disabled=None):
@@ -166,7 +186,7 @@ class Strategy(object):
         if pick < 0.1 or not trees:
             new_tree = actions.tree.ActionTree(direction)
             new_tree.initialize(1, self.environment_id)
-            trees.append(new_tree)
+            trees.append(new_tree) 
         elif pick < 0.2 and trees:
             trees.remove(random.choice(trees))
         elif pick < 0.25 and trees and len(trees) > 1:
@@ -238,7 +258,7 @@ def do_mate(forest1, forest2):
     return False
 
 
-def mate(ind1, ind2, indpb):
+def mate(ind1, ind2, logger, indpb):
     """
     Executes a uniform crossover that modify in place the two
     individuals. The attributes are swapped according to the
@@ -247,6 +267,7 @@ def mate(ind1, ind2, indpb):
     out_success, in_success = True, True
     if ind1.out_enabled and random.random() < indpb:
         out_success = do_mate(ind1.out_actions, ind2.out_actions)
+        logger.debug('strategy mate happened')
 
     if ind1.in_enabled and random.random() < indpb:
         in_success = do_mate(ind1.in_actions, ind2.in_actions)

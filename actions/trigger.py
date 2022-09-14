@@ -7,7 +7,7 @@ FIXED_TRIGGER = None
 GAS_ENABLED = True
 
 class Trigger(object):
-    def __init__(self, trigger_type, trigger_field, trigger_proto, trigger_value=0, environment_id=None, gas=None):
+    def __init__(self, trigger_type, trigger_field, trigger_proto, trigger_value='A', environment_id=None, gas=None):
         """
         Params:
             - trigger_type: the type of trigger. Only "field" (matching based on a field value) is currently supported.

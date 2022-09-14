@@ -44,7 +44,7 @@ class Layer():
         """
         Retreives a random field and value.
         """
-        field = random.choice(self.fields)
+        field = random.choice(self.fields)     # filed 值为self.get(field)
         return field, self.get(field)
 
     def gen_random(self):
@@ -100,14 +100,14 @@ class Layer():
         # XXX Temporarily disabling the reconstitution check due to scapy bug (#2034)
         #assert bytes(self.protocol(bytes(self.layer))) == bytes(self.layer)
 
-    def gen(self, field):
+    def gen(self, field): #针对返回的value
         """
         Generates a value for this field.
         """
         assert field in self.fields
-        if field in self.generators:
-            return self.generators[field](field)
-
+        if field in self.generators: #generators包含loads,dataofs,flags,chksum,options,window
+            return self.generators[field](field) #self.generators['loads']('loads') 直接返回DNS_REQUEST类似的内容
+            # 在layers.tcp_layer_TCPLayer中
         # Dual field accessors are fields that require two pieces of information
         # to retrieve them (for example, "options-eol"). These are delimited by
         # a dash "-".
@@ -115,7 +115,7 @@ class Layer():
         if "-" in field and base in self.generators:
             return self.generators[base](field)
 
-        sample = fuzz(self.protocol())
+        sample = fuzz(self.protocol())   # scapy的fuzz函数
 
         new_value = getattr(sample, field)
         if new_value == None:
@@ -180,8 +180,12 @@ class Layer():
         value = urllib.parse.unquote(value)
 
         value = value.encode('utf-8')
-        dns_payload = b"\x009ib\x81\x80\x00\x01\x00\x01\x00\x00\x00\x01\x08faceface\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x01+\x00\x04\xc7\xbf2I\x00\x00)\x02\x00\x00\x00\x00\x00\x00\x00"
-        http_payload = b"GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"
+        #dns_payload = b"\x009ib\x81\x80\x00\x01\x00\x01\x00\x00\x00\x01\x08faceface\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x01+\x00\x04\xc7\xbf2I\x00\x00)\x02\x00\x00\x00\x00\x00\x00\x00"
+        dns_payload = b"\x009ib\x81\x80\x00\x01\x00\x01\x00\x00\x00\x01\x08ultrasurf\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x01+\x00\x04\xc7\xbf2I\x00\x00)\x02\x00\x00\x00\x00\x00\x00\x00"
+
+        #http_payload = b"GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"
+        #http_payload = b"GET 192.168.112.129/ultrasurf.html HTTP/1.1\r\nHost: www.example.com\r\n\r\n"     # success and see http get on server side / recevice 400 bad request
+        http_payload = b"GET 192.168.112.129/ultrasurf.html HTTP/1.1\r\n\r\n"
 
         value = value.replace(b"__DNS_REQUEST__", dns_payload)
         value = value.replace(b"__HTTP_REQUEST__", http_payload)

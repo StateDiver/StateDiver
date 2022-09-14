@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import random
 import socket
+from ssl import ALERT_DESCRIPTION_HANDSHAKE_FAILURE
 import subprocess
 import sys
 import threading
@@ -20,8 +21,8 @@ import urllib3
 
 import actions.utils
 import censors.censor_driver
-from datetime import datetime
 import runpy
+from datetime import datetime
 
 
 # Suppress unfixed Paramiko warnings (see Paramiko issue #1386)
@@ -128,7 +129,7 @@ class Evaluator():
 
         self.logger = logger
 
-    def evaluate(self, ind_list):
+    def evaluate(self, ind_list,need_recover_force):
         """
         Perform the overall fitness evaluation driving.
 
@@ -136,8 +137,13 @@ class Evaluator():
             ind_list (list): list of individuals to evaluate
 
         Returns:
-            list: Population list after evaluation
+            ind_list (list): Population list after evaluation
+            success (bool): wheather the process all success (in previous experient, Snort may stunned sometimes, then 
+                            we need to do it again  )
         """
+
+        if len(ind_list)== 0:
+            return [],True
         # update checkpoint information
         snort_console_checkpoint=get_tail_checkpoint('/mnt/hgfs/share-folders/snort-log/console.log')
         snort_alert_checkpoint=get_tail_checkpoint('/mnt/hgfs/share-folders/snort-log/alert')
@@ -192,27 +198,64 @@ class Evaluator():
 
             self.worker(ind_list, "main", environment)
 
+
+
         for ind in ind_list:
             self.read_fitness(ind)
-            self.read_port(ind)
+            self.read_port(ind)  
         self.terminate_docker()
-
-        # [3.15 update] Doing state gathering process
+        
+        # Doing state gathering process
         self.logger.debug("Beginning State gathering process") 
         time.sleep(2) # added  to be shrinked
         classify_log_per_packet_snort=state_change_analyze_snort_prev(snort_console_checkpoint)
         classify_log_per_packet_suricata=state_change_analyze_suricata_prev(suricata_console_checkpoint)
+        classify_snort_alert_group=alert_change_analyze_snort_group(snort_alert_checkpoint)
+        need_recover=False # debug switch to True
         for ind in ind_list:
             port_number=ind.send_port_number
             # deal with all drop strategy (can add some mark in Strategy later)
             if port_number == None: 
                 continue  
+
             try:
                 ind.result_snort,ind.snort_state_change_overall_client,ind.snort_state_change_overall_server,success=state_change_analyze_snort(classify_log_per_packet_snort[port_number])
                 ind.result_suricata,ind.suricata_state_change_overall,success=state_change_analyze_suricata(classify_log_per_packet_suricata[port_number])
             except KeyError as err:
-                ind.useless = True  # it can't be undone 
-        return ind_list
+                ind.useless = True  
+
+
+            if port_number not in classify_snort_alert_group:
+                ind.terminate_by_server = True
+
+        if need_recover or need_recover_force:
+            # recover ind_list
+            for ind in ind_list:
+                
+                try:
+                    actions.utils.delete_info(self.output_directory,ind.environment_id)
+                except:
+                    self.logger.debug("hit another except in line 236.")
+                    pass
+                # recover ind
+                ind.fitness = -666
+                ind.result_snort = None
+                ind.result_suricata = None
+                ind.can_process_packet_compare = False
+                ind.inconsistent_packet_num = 0
+                ind.change_happened_packet_num=[]  
+                ind.terminate_by_server = False
+                ind.send_port_number = None
+
+            # time sleep
+            #self.logger.debug("ready to add time sleep.")
+            #t0=time.time()    
+            time.sleep(270)
+            #t1=time.time()
+            #self.logger.debug("sleep time %d.",int(t1-t0)) 
+            self.logger.debug("Add 270 seconds time sleep over.") 
+            return ind_list,False 
+        return ind_list,True
 
     def run_test(self, environment, ind):
         """
@@ -225,12 +268,6 @@ class Evaluator():
         Returns:
             tuple: (ind.environment_id, ind.fitness) environment ID of strategy and fitness
         """
-        # If skip_empty is enabled, this is not the canary, and the individual is empty,
-        # skip it
-        if len(ind) == 0 and ind.environment_id != "canary" and self.skip_empty:
-            self.logger.info("[skipped] Fitness %d: %s" % (-1000, str(ind)))
-            ind.fitness = -1000
-            return "skipped", -1000
 
         fitnesses = []
 
@@ -262,7 +299,6 @@ class Evaluator():
                     self.logger.debug("Running standalone plugin.")
                     self.args.update({"strategy": str(ind)})
                     tick0=time.time()
-                    #time.sleep(1) [breakdown analysis 3.11 取消]
                     snort_console_checkpoint=get_tail_checkpoint('/mnt/hgfs/share-folders/snort-log/console.log')
                     snort_alert_checkpoint=get_tail_checkpoint('/mnt/hgfs/share-folders/snort-log/alert')
                     suricata_console_checkpoint=get_tail_checkpoint('/mnt/hgfs/share-folders/suricata-log/console.log')
@@ -273,7 +309,7 @@ class Evaluator():
                     self.plugin.start(self.args, self, environment, ind, self.logger)
                     tick1=time.time()
                     print('evaluator run_test spent:',tick1-tick0)
-                    self.read_fitness(ind)                    
+                    self.read_fitness(ind)
                 else:
                     self.logger.debug("Launching client and server directly.")
                     # If we're given a server to start, start it now
@@ -334,8 +370,10 @@ class Evaluator():
         elif environment.get("docker"):
             self.run_docker_client(args, environment, logger)
         else:
+            tick0=time.time()
             self.run_local_client(args, environment, logger)
-
+            tick1=time.time()
+            print('run_local_client time spent:',tick1-tick0)
         fitpath = os.path.join(BASEPATH, self.output_directory, actions.utils.FLAGFOLDER, environment["id"]) + ".fitness"
         # Do not overwrite the fitness if it already exists
         if not os.path.exists(fitpath):
@@ -520,24 +558,6 @@ class Evaluator():
         self.exec_cmd(command)
 
     def exec_cmd(self, command, timeout=60):
-        # """
-        # Runs a subprocess command at the correct log level.
-
-        # Args:
-        #     command (list): Command to execute.
-        #     timeout (int, optional): Timeout for execution
-        # """
-        # self.logger.debug(" ".join(command))
-        # try:
-        #     if actions.utils.get_console_log_level() == "debug":
-        #         subprocess.check_call(command, timeout=60)
-        #     else:
-        #         subprocess.check_call(command, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=60)
-        # except subprocess.CalledProcessError as exc:
-        #     # Code 137 is for SIGKILL, which is how docker containers are shutdown by the evaluator.
-        #     # Ignore these exceptions, raise all others
-        #     if exc.returncode != 137:
-        #         raise
         """
         Runs a subprocess command at the correct log level.
 
@@ -547,18 +567,9 @@ class Evaluator():
         """
         self.logger.debug(" ".join(command))
         try:
-            if actions.utils.get_console_log_level() == "debug":  # 
+            if actions.utils.get_console_log_level() == "debug":  
                 tick0=time.time()
-                # fill the blank of command_string
-                #command[26]='0'
-                #command[28]='0'
-                #command[30]='test'
-                #command[32]='test'
-                
-                # without log-on-success
-                # command[32]='test'  # --injected-http-contains
-                # #command[34]='test'  # --environment_id 
-                # command[34]=self.server_args.get('environment_id')
+
                 
                 # with log-on-success
                 command[33]='test'
@@ -578,11 +589,7 @@ class Evaluator():
                 tick1=time.time()
                 print('subprocess time cost:',tick1-tick0)
 
-            # if actions.utils.get_console_log_level() == "debug":  
-            #     try:
-            #         subprocess.call(command,timeout=1.2) # 0.6   0.8
-            #     except:
-            #         pass
+
 
             else:
                 subprocess.check_call(command, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=60)
@@ -889,19 +896,37 @@ class Evaluator():
             environment (dict): Environment dictionary
         """
         environment["remote"] = None
-
+        jam=False
+        jam_count=0
         if self.external_client:
             environment["remote"] = self.setup_remote()
             environment["worker"] = actions.utils.get_worker(self.external_client, self.logger)
-        
-        
+        log_success_path = os.path.join(BASEPATH,
+                            self.output_directory,
+                            "success" , "ga_summary"
+                            )
+        success_fd=open(log_success_path,"a")
         for ind in ind_list:
             if self.stop:
                 break
 
-            # Run a test
-            eid, fitness = self.run_test(environment, ind)
 
+            tick0=time.time()
+            eid, fitness = self.run_test(environment, ind)
+            tick1=time.time()
+            case_time_spend=tick1-tick0
+            print('■■■■■■■■■■ one strategy time spend:',case_time_spend,'■■■■■■■■■■')
+
+            if case_time_spend>10: # means jam happened
+                suspicious_jam=True
+            if case_time_spend<10:
+                suspicious_jam=False
+                jam_count=0
+            if suspicious_jam:
+                jam_count+=1
+            if jam_count>20:
+                jam=True
+                break
             if not fitness:
                 fitness = -1000
 
@@ -909,21 +934,21 @@ class Evaluator():
             if fitness < 0 and self.args.get("log_on_fail"):
                 self.dump_logs(eid)
             elif fitness > 0 and self.args.get("log_on_success"):
-                log_success_path = os.path.join(BASEPATH,
-                            self.output_directory,
-                            "success" , "ga_summary"
-                            )
-                success_fd=open(log_success_path,"a")
+                if ind.source_dict['prior']+ind.source_dict['population']!=0:
+                    prior_rate=ind.source_dict['prior']/(ind.source_dict['prior']+ind.source_dict['population'])
+                    orig_rate=ind.source_dict['population']/(ind.source_dict['prior']+ind.source_dict['population'])
+                else:
+                    prior_rate=0
+                    orig_rate=0
                 current_time = datetime.now().strftime("%H:%M:%S")
-                log_info=current_time+' Fitness:'+str(fitness)+' | ID: '+str(ind.environment_id)+' | '+str(ind)+'\n'
+                log_info='prior: '+str(round(prior_rate,2)) +' orig: '+str(round(orig_rate,2)) +'| '+current_time+' Fitness:'+str(fitness)+' | ID: '+str(ind.environment_id)+' | father_ID: '+str(ind.father_environment_id)+' | '+str(ind)+'\n'
                 success_fd.write(log_info)
                 self.dump_success_logs(eid)
-                success_fd.close()
-                #self.dump_logs(eid)
 
         # Clean up the test environment
-        
+        success_fd.close()
         self.shutdown_environment(environment)
+        return jam
 
     def assign_ids(self, ind_list):
         """
@@ -960,7 +985,7 @@ class Evaluator():
                 self.logger.exception("Failed to open log file")
                 continue
             self.logger.error("%s: %s", log_file, log)
-    
+
     def dump_success_logs(self, environment_id):
         """
         Dumps client, engine, server, and censor logs, to be called on test failure
@@ -1178,7 +1203,6 @@ class Evaluator():
             self.logger.exception("[%s] Failed to read port file" % ind.environment_id)
             ind.send_port_number = None
 
-
     def shutdown_container(self, container):
         """
         Tries to shutdown a given container and eats a NotFound exception if the container
@@ -1212,6 +1236,12 @@ class Evaluator():
         """
         self.terminate_docker()
 
+
+def get_tail_checkpoint(filename):
+    with open(filename) as f:
+        f.seek(0,2)  
+        checkpoint=f.tell()
+    return checkpoint
 
 def collect_plugin(test_plugin, plugin_type, command, full_args, plugin_args):
     """
@@ -1321,12 +1351,6 @@ def get_args(cmd, single_use=False):
     args, _ = parser.parse_known_args(cmd)
     return vars(args)
 
-def get_tail_checkpoint(filename):
-    with open(filename) as f:
-        f.seek(0,2)  
-        checkpoint=f.tell()
-    return checkpoint
-
 
 
 class Packet_and_State_change:
@@ -1337,11 +1361,14 @@ class Packet_and_State_change:
         self.client_state_change_uniq=[]
         self.server_state_change_uniq=[]
         self.state_change=[]
-        self.client_end_stage=''  
+        self.client_end_stage='' 
         self.server_end_stage=''
         self.end_stage=''
         self.change_happened=False
-
+        #self.client_init_state=''
+        #self.client_last_state=''
+        #self.server_init_state=''
+        #self.server_last_state=''
 
 def state_change_analyze_snort_prev(snort_log_checkpoint):
     """
@@ -1353,10 +1380,11 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
     Returns:
         classify_log_per_packet (dict): log file after preprocessing e.g. {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
     """
-    begin_str='snort_stream_tcp.c:5908' #Got TCP Packet...
+    begin_str='snort_stream_tcp.c:5908' #Got TCP Packet...   2.9.13 5654   2.9.19 5908
     raw_log_per_packet=[]
-    classify_log_per_packet={}  # {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
+    classify_log_per_packet={}  #  {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
     log_file_name='/mnt/hgfs/share-folders/snort-log/console.log'
+    #log_file_name='D:\Virtual Machines\share-folders\snort-log\console.log'
     with open(log_file_name,'r') as f:
         f.seek(snort_log_checkpoint)
         all_the_log=f.read()
@@ -1374,9 +1402,9 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
         raw_log_per_packet.append(per_log)
         all_the_log=all_the_log[right:]
 
-    
+    normal_flag=False
     for log in raw_log_per_packet:
-        
+       
         raw_port_info=re.findall('0x[0-9ABCDEF]{1,}:[0-9]{1,}',log)
         port_number=None
         for item in raw_port_info:
@@ -1386,10 +1414,14 @@ def state_change_analyze_snort_prev(snort_log_checkpoint):
                 break
         if port_number in classify_log_per_packet:
             classify_log_per_packet[port_number].append(log)
+            normal_flag=True
         else:
             classify_log_per_packet[port_number]=[]
             classify_log_per_packet[port_number].append(log)
-        
+
+    if normal_flag == False:
+        print('Snort State Collect Error. Please check state_change_analyze_snort or state_change_analyze_snort_prev function in evaluator.py')
+        sys.exit()
     return classify_log_per_packet
 
 
@@ -1403,7 +1435,7 @@ def state_change_analyze_snort(raw_log_per_packet):
     for log in raw_log_per_packet:
         #print(log)
         temp=Packet_and_State_change()
-        
+     
         #print("log:",log)
         try:
             temp.packet=re.findall('Got TCP Packet [\S|\s]*dsize: [0-9]*',log)[0][15:]
@@ -1426,7 +1458,7 @@ def state_change_analyze_snort(raw_log_per_packet):
         for item in temp.server_state_change:
             if not item in temp.server_state_change_uniq:
                 temp.server_state_change_uniq.append(item)
-        
+       
         for item in temp.client_state_change_uniq:
             if snort_state_change_overall_client==[]:
                 snort_state_change_overall_client.append(item)
@@ -1442,7 +1474,7 @@ def state_change_analyze_snort(raw_log_per_packet):
         
         
 
-        # in order to be same with suricata change syn_sent to [none,syn_sent] 
+        # in order to be same with suricata change syn_sent to [none,syn_sent]
         # if len(temp.client_state_change_uniq)==1 and temp.client_state_change_uniq[0]=='SYN_SENT' and len(temp.server_state_change_uniq)==1 and temp.server_state_change_uniq[0]=='LISTEN':
         #     temp.client_state_change_uniq.insert(0,'NONE')
 
@@ -1495,6 +1527,149 @@ def state_change_analyze_snort(raw_log_per_packet):
         print('**************************************************')
     return result,snort_state_change_overall_client,snort_state_change_overall_server,True
 
+def state_change_analyze_snort3_prev(snort_log_checkpoint):
+    """
+    Preprocessing Snort console.log file for later use.
+
+    Args:
+        snort_log_checkpoint (int): last time end fd position of snort console.log
+
+    Returns:
+        classify_log_per_packet (dict): log file after preprocessing e.g. {44618：[raw_log_per_packet],44620:[raw_log_per_packet]...}
+    """
+    begin_str='Seq=' 
+    raw_log_per_packet=[]
+    classify_log_per_packet={}  
+    log_file_name='/mnt/hgfs/share-folders/snort-log/console.log'
+    #log_file_name='D:\Virtual Machines\share-folders\snort-log\console.log'
+    with open(log_file_name,'r') as f:
+        f.seek(snort_log_checkpoint)
+        all_the_log=f.read()
+
+    all_the_log=all_the_log[all_the_log.find(begin_str):]
+
+
+    while (len(all_the_log)!=0):
+        right=all_the_log.find(begin_str,1)  
+        if right==-1:
+            raw_log_per_packet.append(all_the_log)
+            break
+        per_log=all_the_log[0:right]
+        raw_log_per_packet.append(per_log)
+        all_the_log=all_the_log[right:]
+
+
+    for log in raw_log_per_packet:
+
+        raw_port_info=re.findall('CP=[0-9]{1,}',log)
+        port_number=None
+        for item in raw_port_info:
+            temp=item[item.find('=')+1:]
+            if temp!='80':
+                port_number=temp
+                break
+        if port_number in classify_log_per_packet:
+            classify_log_per_packet[port_number].append(log)
+        else:
+            classify_log_per_packet[port_number]=[]
+            classify_log_per_packet[port_number].append(log)
+
+    return classify_log_per_packet  
+
+def state_change_analyze_snort3(raw_log_per_packet):
+    result=[]
+    snort_state_change_overall_client=[]
+    snort_state_change_overall_server=[]
+    state_re_string='(LST|SYS|SYR|EST|FW1|FW2|CLW|CLG|LAK|TWT|CLD|NON)'
+    client_re_string='CLI(>|<) ST='+state_re_string
+    server_re_string='SRV(>|<) ST='+state_re_string
+    for log in raw_log_per_packet:
+
+        temp=Packet_and_State_change()
+
+        try:
+            temp.packet=re.findall('Seq[\S|\s]*Len=[\d]+',log)[0] #[15:]
+        except IndexError as err:
+            return None,None,None, False
+
+        for match in re.finditer(client_re_string,log):
+            state_string=match.group()
+            temp.client_state_change.append(re.findall(state_re_string,state_string)[0])
+        
+        for match in re.finditer(server_re_string,log):
+            state_string=match.group()
+            temp.server_state_change.append(re.findall(state_re_string,state_string)[0])
+        
+
+        for item in temp.client_state_change:
+            if not item in temp.client_state_change_uniq:
+                temp.client_state_change_uniq.append(item)
+        for item in temp.server_state_change:
+            if not item in temp.server_state_change_uniq:
+                temp.server_state_change_uniq.append(item)
+
+        for item in temp.client_state_change_uniq:
+            if snort_state_change_overall_client==[]:
+                snort_state_change_overall_client.append(item)
+                continue
+            if snort_state_change_overall_client[-1]!=item:
+                snort_state_change_overall_client.append(item)
+        for item in temp.server_state_change_uniq:
+            if snort_state_change_overall_server==[]:
+                snort_state_change_overall_server.append(item)
+                continue
+            if snort_state_change_overall_server[-1]!=item:
+                snort_state_change_overall_server.append(item)        
+
+
+        if len(temp.client_state_change_uniq)>1 or len(temp.server_state_change_uniq)>1:
+            temp.change_happened=True
+            temp.server_end_stage=temp.server_state_change_uniq[-1]
+            temp.client_end_stage=temp.client_state_change_uniq[-1]
+
+        result.append(temp)
+
+    for i in range(len(result)):
+        if result[i].client_end_stage=='':
+            result[i].client_end_stage=result[i-1].client_end_stage
+        if result[i].server_end_stage=='':
+            result[i].server_end_stage=result[i-1].server_end_stage
+
+    # summary
+    print('**************************************************')
+    for item in result:
+        print(item.packet)
+        client_uniq_num=len(item.client_state_change_uniq)
+        server_uniq_num=len(item.server_state_change_uniq)
+        if item.change_happened==False:
+            print('No state change occurred')
+            print('**************************************************')
+            continue
+        if client_uniq_num<=2:
+            print('Client',item.client_state_change_uniq[0],'->',item.client_state_change_uniq[-1])
+        else:
+            curr=0
+            print('Client',end='')
+            while(curr<client_uniq_num-1):
+                print(item.client_state_change_uniq[curr],end='')
+                curr+=1
+            print(item.client_state_change_uniq[-1])
+        if server_uniq_num<=2:
+            print('Server',item.server_state_change_uniq[0],'->',item.server_state_change_uniq[-1])
+        else:
+            curr=0
+            print('Server',end='')
+            while(curr<server_uniq_num-1):
+                print(item.server_state_change_uniq[curr],end='')
+                curr+=1
+            print(item.server_state_change_uniq[-1])
+        
+        #print('Client',item.client_init_state,'->',item.client_last_state)
+        #print('Server',item.server_init_state,'->',item.server_last_state)
+        print('**************************************************')
+    return result,snort_state_change_overall_client,snort_state_change_overall_server,True
+
+
 
 def state_change_analyze_suricata_prev(suricata_log_checkpoint):
     """
@@ -1530,7 +1705,7 @@ def state_change_analyze_suricata_prev(suricata_log_checkpoint):
     
    
     for log in raw_log_per_packet:
-       
+        
         raw_port_info=re.findall('[0-9]{1,}:[0-9]{1,}',log)
         port_number=None
         for item in raw_port_info:
@@ -1557,7 +1732,7 @@ def state_change_analyze_suricata(raw_log_per_packet):
     for log in raw_log_per_packet:
         #print(log)
         temp=Packet_and_State_change()
-        
+       
         #temp.packet=re.findall('packet 0 is TCP. Direction (TOSERVER|TOCLIENT),',log)[0]
         try:
             temp.packet = re.findall('packet 0 is TCP. Direction [A-Z]*, tcp port [0-9]*:[0-9]*',log)[0]
@@ -1565,8 +1740,7 @@ def state_change_analyze_suricata(raw_log_per_packet):
             return None,False
 
         #print(temp.packet)
-        
-        
+
         for match in re.finditer(state_change_re_string,log):  #state changed from xxx to xxx
             state_string=match.group()
             state_found=re.findall(state_re_string,state_string) #[none,syn_sent]
@@ -1579,7 +1753,7 @@ def state_change_analyze_suricata(raw_log_per_packet):
         result.append(temp)
 
 
-    
+    #
     for i in range(0,len(result)):
         temp=result[i]
         if temp.end_stage=='':
@@ -1600,3 +1774,25 @@ def state_change_analyze_suricata(raw_log_per_packet):
 
     return result,suricata_state_change_overall,True
 
+def alert_change_analyze_snort_group(snort_alert_checkpoint):
+    """
+    analyze whether these cases has trigger snort alert
+
+    Args:
+        snort_alert_checkpoint (int): the end file descriptor number of the last-check of alert file
+
+    Returns:
+        has_alert (bool): whether strategy trigger alert
+        port_string (str): if trigger alert , return port string 
+    """
+    alert_filename='/mnt/hgfs/share-folders/snort-log/alert'
+    begin_str='192.168.111.128:'
+    alert_port=[]
+    with open(alert_filename,'r') as f:
+        f.seek(snort_alert_checkpoint)
+        all_log=f.read()
+    raw_alert_port=re.findall('192.168.111.128:[0-9]{1,}',all_log)
+    for item in raw_alert_port:
+        port_number_str=item[item.find(':')+1:]
+        alert_port.append(port_number_str)
+    return alert_port

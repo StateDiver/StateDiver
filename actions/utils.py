@@ -19,6 +19,7 @@ import actions.trigger
 import layers.packet
 import plugins.plugin_client
 import plugins.plugin_server
+import argparse
 
 from scapy.all import TCP, IP, UDP, rdpcap
 import netifaces
@@ -30,6 +31,7 @@ RUN_DIRECTORY = os.path.join("trials", datetime.datetime.now().strftime("%Y-%m-%
 FLAGFOLDER = "flags"
 PORTFOLDER = "ports"
 LOGFOLDER = "logs"
+
 # Holds copy of console file handler's log level
 CONSOLE_LOG_LEVEL = "debug"
 
@@ -245,6 +247,8 @@ def close_logger(logger):
         if isinstance(handler, logging.FileHandler):
             handler.close()
 
+            logger.removeHandler(handler)
+
 
 class Logger():
     """
@@ -389,9 +393,9 @@ def setup_dirs(output_dir):
     ga_packets_dir = os.path.join(output_dir, "packets")
     ga_generations_dir = os.path.join(output_dir, "generations")
     ga_data_dir = os.path.join(output_dir, "data")
-    ga_success_dir = os.path.join(output_dir, "success")
     ga_state_change_dir = os.path.join(output_dir, "state_changes")
-    for directory in [ga_log_dir, ga_flags_dir, ga_packets_dir, ga_generations_dir, ga_data_dir, ga_state_change_dir, ga_ports_dir, ga_success_dir]:
+    ga_success_dir = os.path.join(output_dir, "success")
+    for directory in [ga_log_dir, ga_flags_dir, ga_packets_dir, ga_generations_dir, ga_data_dir, ga_state_change_dir,ga_ports_dir,ga_success_dir]:
         if not os.path.exists(directory):
             os.makedirs(directory, exist_ok=True)
     return ga_log_dir
@@ -402,11 +406,11 @@ def get_from_fuzzed_or_real_packet(environment_id, real_packet_probability, enab
     Retrieves a protocol, field, and value from a fuzzed or real packet, depending on
     the given probability and if given packets is not None.
     """
-    packets = actions.utils.read_packets(environment_id)
+    packets = actions.utils.read_packets(environment_id)  
     if packets and random.random() < real_packet_probability:
         packet = random.choice(packets)
         return packet.get_random()
-    return layers.packet.Packet().gen_random()
+    return layers.packet.Packet().gen_random() 
 
 
 def read_packets(environment_id):
@@ -417,7 +421,7 @@ def read_packets(environment_id):
     if not environment_id:
         return None
 
-    packets_path = os.path.join(RUN_DIRECTORY, "packets", "original_" + str(environment_id) + ".pcap")
+    packets_path = os.path.join(RUN_DIRECTORY, "packets", "original_" + str(environment_id) + ".pcap") 
     if not os.path.exists(packets_path):
         return None
 
@@ -492,7 +496,20 @@ def write_fitness(fitness, output_path, eid):
     fitpath = os.path.join(PROJECT_ROOT, output_path, FLAGFOLDER, eid) + ".fitness"
     with open(fitpath, "w") as fitfile:
         fitfile.write(str(fitness))
-        
+
+def delete_info(output_path, eid):
+    """
+    Delete relative file
+    """
+    fitpath = os.path.join(PROJECT_ROOT, output_path, FLAGFOLDER, eid) + ".fitness"
+    portpath = os.path.join(PROJECT_ROOT, output_path, PORTFOLDER, eid) + ".ports"
+    client_logpath = os.path.join(PROJECT_ROOT, output_path, LOGFOLDER, eid) + ".client.log"
+    engine_logpath = os.path.join(PROJECT_ROOT, output_path, LOGFOLDER, eid) + ".engine.log"
+    os.remove(fitpath)
+    os.remove(portpath)
+    os.remove(client_logpath)
+    os.remove(engine_logpath)
+    
 def write_port(port, output_path ,eid):
     """
     Write the port number of sending to disk.
@@ -500,6 +517,7 @@ def write_port(port, output_path ,eid):
     portpath = os.path.join(PROJECT_ROOT, output_path,PORTFOLDER,eid) + ".ports"
     with open(portpath,"w") as portfile:
         portfile.write(str(port))
+
 
 def get_interface():
     """
@@ -536,3 +554,5 @@ def get_worker(name, logger):
         data["keyfile"] = os.path.join(dirpath, data["keyfile"])
 
     return data
+
+

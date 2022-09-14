@@ -23,7 +23,8 @@ from scapy.layers.inet import IP
 from scapy.utils import wrpcap
 from scapy.config import conf
 
-socket.setdefaulttimeout(1)
+#socket.setdefaulttimeout(1)
+socket.setdefaulttimeout(3)
 
 import layers.packet
 import actions.strategy
@@ -43,11 +44,11 @@ class Engine():
                        in_queue_num=None,
                        out_queue_num=None,
                        forwarder=None,
-                       save_seen_packets=True,
+                       save_seen_packets=False,
                        demo_mode=False):
         """
         Args:
-            server_port (str): The port(s) the engine will monitor
+            server_port (int): The port the engine will monitor
             string_strategy (str): String representation of strategy DNA to apply to the network
             environment_id (str, None): ID of the given strategy
             server_side (bool, False): Whether or not the engine is running on the server side of the connection
@@ -67,7 +68,7 @@ class Engine():
         self.seen_packets = []
         self.environment_id = environment_id
         self.forwarder = forwarder
-        self.save_seen_packets = save_seen_packets
+        self.save_seen_packets = False
         if forwarder:
             self.sender_ip = forwarder["sender_ip"]
             self.routing_ip = forwarder["routing_ip"]
@@ -119,7 +120,10 @@ class Engine():
         # for scapy to send packets more quickly than using just send(), as under the hood
         # send() creates and then destroys a socket each time, imparting a large amount
         # of overhead.
-        self.socket = conf.L3socket(iface=actions.utils.get_interface())
+        # [3.17修改]
+        if self.enabled:
+            self.socket = conf.L3socket(iface=actions.utils.get_interface())
+        
 
     def __enter__(self):
         """
@@ -135,10 +139,17 @@ class Engine():
         Allows the engine to be used as a context manager; simply stops the engine
         if enabled.
         """
+        tick0=time.time()
         if self.enabled:
+            tick00=time.time()
             self.shutdown_nfqueue()
+            tick11=time.time()
+            print('shutdown nfqueue time spent:',tick11-tick00)
         if self.logger:
             actions.utils.close_logger(self.logger)
+        tick1=time.time()
+        #print('engine __exit__ time spent:',tick1-tick0)
+
 
     def do_nat(self, packet):
         """
@@ -177,6 +188,7 @@ class Engine():
                 self.mark_send_port=True
                 self.strategy.send_port_number=packet["TCP"].sport
                 actions.utils.write_port(self.strategy.send_port_number, self.output_directory, self.environment_id)
+            
         except Exception:
             self.logger.exception("Error in engine mysend.")
 
@@ -227,25 +239,17 @@ class Engine():
             add_or_remove = "D"
         cmds = []
         # for proto in ["tcp", "udp"]:
-        #     # Need to change the match rule if multiple ports are specified
-        #     # Default match policy is the protocol
-        #     match_policy = proto
-        #     # Don't need to do any checking on the port since the iptables command can error, closing the engine
-        #     # Change server port to str for backwards compatibility calling engine directly with an int
-        #     if any(x in str(self.server_port) for x in [":", ","]):
-        #         match_policy = "multiport"
-
-        #     cmds += ["iptables -%s %s -p %s --match %s --%s %s -j NFQUEUE --queue-num %d" %
-        #             (add_or_remove, out_chain, proto, match_policy, port1, self.server_port, self.out_queue_num),
-        #             "iptables -%s %s -p %s --match %s --%s %s -j NFQUEUE --queue-num %d" %
-        #             (add_or_remove, in_chain, proto, match_policy, port2, self.server_port, self.in_queue_num)]
-        #     # If this machine is acting as a middlebox, we need to add the same rules again
-        #     # in the opposite direction so that we can pass packets back and forth
-        #     if self.forwarder:
-        #         cmds += ["iptables -%s %s -p %s --match %s --%s %s -j NFQUEUE --queue-num %d" %
-        #             (add_or_remove, out_chain, proto, match_policy, port2, self.server_port, self.out_queue_num),
-        #             "iptables -%s %s -p %s --match %s --%s %s -j NFQUEUE --queue-num %d" %
-        #             (add_or_remove, in_chain, proto, match_policy, port1, self.server_port, self.in_queue_num)]
+        #    cmds += ["iptables -%s %s -p %s --%s %d -j NFQUEUE --queue-num %d" %
+        #            (add_or_remove, out_chain, proto, port1, self.server_port, self.out_queue_num),
+        #            "iptables -%s %s -p %s --%s %d -j NFQUEUE --queue-num %d" %
+        #            (add_or_remove, in_chain, proto, port2, self.server_port, self.in_queue_num)]
+        #     #If this machine is acting as a middlebox, we need to add the same rules again
+        #     #in the opposite direction so that we can pass packets back and forth
+        #    if self.forwarder:
+        #        cmds += ["iptables -%s %s -p %s --%s %d -j NFQUEUE --queue-num %d" %
+        #            (add_or_remove, out_chain, proto, port2, self.server_port, self.out_queue_num),
+        #            "iptables -%s %s -p %s --%s %d -j NFQUEUE --queue-num %d" %
+        #            (add_or_remove, in_chain, proto, port1, self.server_port, self.in_queue_num)]
 
         for cmd in cmds:
             self.logger.debug(cmd)
@@ -271,6 +275,7 @@ class Engine():
         # Create our NFQueues
         self.out_nfqueue = netfilterqueue.NetfilterQueue()
         self.in_nfqueue = netfilterqueue.NetfilterQueue()
+
         # Bind them
         self.out_nfqueue.bind(self.out_queue_num, self.out_callback)
         self.in_nfqueue.bind(self.in_queue_num, self.in_callback)
@@ -301,6 +306,7 @@ class Engine():
         self.logger.debug("NFQueue Initialized after %d", int(i))
         # mark weather set the strategy send port number
         self.mark_send_port=False
+
     def shutdown_nfqueue(self):
         """
         Shutdown nfqueue.
@@ -314,14 +320,31 @@ class Engine():
         time.sleep(0.05)
         if self.in_nfqueue:
             self.in_nfqueue.unbind()
+            # self.in_nfqueue_fd=self.in_nfqueue.get_fd()
+            # try:
+            #     os.close(self.in_nfqueue_fd)
+            # except:
+            #     pass
         if self.out_nfqueue:
             self.out_nfqueue.unbind()
+            # self.out_nfqueue_fd=self.out_nfqueue.get_fd()
+            # try:
+            #     os.close(self.out_nfqueue_fd)
+            # except:
+            #     pass
         self.configure_iptables(remove=True)
+        #self.configure_iptables(remove=True)
         self.socket.close()
         self.out_nfqueue_socket.close()
         self.in_nfqueue_socket.close()
         del self.in_nfqueue
         del self.out_nfqueue
+
+        # try:  
+        #     self.out_nfqueue_socket.close()
+        #     self.in_nfqueue_socket.close()
+        # except:
+        #     pass
 
         packets_path = os.path.join(BASEPATH,
                                     self.output_directory,
@@ -329,18 +352,20 @@ class Engine():
                                     "original_%s.pcap" % self.environment_id)
 
         # Write to disk the original packets we captured
-        # if self.save_seen_packets:
-        #     wrpcap(packets_path, [p.packet for p in self.seen_packets])
+        #if self.save_seen_packets:
+        #    wrpcap(packets_path, [p.packet for p in self.seen_packets])
 
         # If the engine exits before it initializes for any reason, these threads may not be set
         # Only join them if they are defined
+        
         # if self.out_nfqueue_thread:
-        #     self.out_nfqueue_thread.join()
+        #    self.out_nfqueue_thread.join()
         # if self.in_nfqueue_thread:
-        #     self.in_nfqueue_thread.join()
+        #    self.in_nfqueue_thread.join()st
 
         # Shutdown the logger
         actions.utils.close_logger(self.logger)
+
 
     def out_callback(self, nfpacket):
         """
@@ -351,7 +376,11 @@ class Engine():
 
         packet = layers.packet.Packet(IP(nfpacket.get_payload()))
         self.logger.debug("Received outbound packet %s", str(packet))
-
+        # # mark which port is used to send the packet 
+        # if (self.mark_send_port==False): 
+        #     self.mark_send_port=True
+        #     self.strategy.send_port_number=packet["TCP"].sport
+        #     actions.utils.write_port(self.strategy.send_port_number, self.output_directory, self.environment_id)
         # Record this packet for a .pacp later
         if self.save_seen_packets:
             self.seen_packets.append(packet)
@@ -426,8 +455,7 @@ def get_args():
     Sets up argparse and collects arguments.
     """
     parser = argparse.ArgumentParser(description='The engine that runs a given strategy.')
-    # Store a string, not int, in case of port ranges/lists. The iptables command checks the port var
-    parser.add_argument('--server-port', action='store', required=True)
+    parser.add_argument('--server-port', type=int, action='store', required=True)
     parser.add_argument('--environment-id', action='store', help="ID of the current strategy under test")
     parser.add_argument('--sender-ip', action='store', help="IP address of sending machine, used for NAT")
     parser.add_argument('--routing-ip', action='store', help="Public IP of this machine, used for NAT")

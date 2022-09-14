@@ -44,7 +44,8 @@ class ActionTree():
         if terminal actions are used.
         """
         self.environment_id = environment_id
-        self.trigger = actions.trigger.Trigger(None, None, None, environment_id=environment_id)
+        #self.trigger = actions.trigger.Trigger(None, None, None, environment_id=environment_id)
+        self.trigger = actions.trigger.Trigger("field","flags", "TCP", environment_id=environment_id)
         if not allow_terminal or random.random() > 0.1:
             allow_terminal = False
 
@@ -440,7 +441,7 @@ class ActionTree():
             new_action = self.get_rand_action(direction=self.direction)
             self.add_action(new_action)
         elif pick < 0.65 and self.action_root:
-            action = random.choice(self)
+            action = random.choice(self)  
             action.mutate(environment_id=self.environment_id)
         # If this individual has never been run under the evaluator,
         # or if it ran and it failed, it won't have an environment_id,
@@ -541,6 +542,39 @@ class ActionTree():
 
         return newroot
 
+    def pretty_print_help_edit(self, root, visual=False, parent=None):
+        """
+        Pretty prints the tree.
+         - root is the highest-level node you wish to start printing
+         - [visual] controls whether a png should be created, by default, this is false.
+         - [parent] is an optional parameter specifying the parent of a given node, should
+           only be used by this function.
+
+        Returns the root with its children as an anytree node.
+        """
+        if not root:
+            return None
+        if visual:
+            newroot = anytree.Node(root.str_without_value() + "(" + str(root.ident) + ")", parent=parent)
+        else:
+            newroot = anytree.Node(root.str_without_value(), parent=parent)
+
+        if root.left:
+            newroot.left = self.pretty_print_help_edit(root.left, visual, parent=newroot)
+        else:
+            if not root.terminal:
+                # Drop never sends packets
+                newroot.left = anytree.Node(' ===> ', parent=newroot)
+
+        if root.right:
+            newroot.right = self.pretty_print_help(root.right, visual, parent=newroot)
+        else:
+            if (not root.terminal and root.branching):
+                # Tamper only has one child
+                newroot.right = anytree.Node(' ===> ', parent=newroot)
+
+        return newroot
+
 
     def pretty_print(self, visual=False):
         """
@@ -552,6 +586,23 @@ class ActionTree():
                 DotExporter(newroot).to_picture("tree.png")
         else:
             newroot = self.pretty_print_help(self.action_root, visual=False)
+        if not newroot:
+            return ""
+        # use an array and join so there's never an issue with newlines at the end
+        pretty_string = []
+        for pre, _fill, node in anytree.RenderTree(newroot):
+            pretty_string.append(("%s%s" % (pre, node.name)))
+        return "%s\n%s" % (str(self.trigger), '\n'.join(pretty_string))
+    def pretty_print_edit(self, visual=False):
+        """
+        Pretty prints the tree.
+        """
+        if visual:
+            newroot = self.pretty_print_help_edit(self.action_root, visual=True)
+            if newroot:
+                DotExporter(newroot).to_picture("tree.png")
+        else:
+            newroot = self.pretty_print_help_edit(self.action_root, visual=False)
         if not newroot:
             return ""
         # use an array and join so there's never an issue with newlines at the end

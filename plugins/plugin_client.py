@@ -45,6 +45,11 @@ class ClientPlugin(Plugin):
         parser.add_argument('--wait-for-censor', action='store_true', help='send control packets to the censor to get startup confirmation')
 
         parser.add_argument('--bad-word', action='store', help="forbidden word to test with", default="ultrasurf")
+        parser.add_argument('--snort-alert-checkpoint',action='store', type=int, help='mark the end of the last run log, to quickly locate this time log')
+        parser.add_argument('--suricata-alert-checkpoint',action='store', type=int, help='mark the end of the last run log, to quickly locate this time log')
+        parser.add_argument('--snort-console-checkpoint',action='store', type=int, help='mark the end of the last run log, to quickly locate this time log')
+        parser.add_argument('--suricata-console-checkpoint',action='store', type=int, help='mark the end of the last run log, to quickly locate this time log')
+
 
         args, _ = parser.parse_known_args(command)
         return vars(args)
@@ -54,6 +59,7 @@ class ClientPlugin(Plugin):
         Runs this plugin.
         """
         logger.debug("Launching %s" % self.name)
+        tick00=time.time()
         fitness = -1000
 
         output_path = os.path.join(PROJECT_ROOT, args.get("output_directory"))
@@ -66,27 +72,49 @@ class ClientPlugin(Plugin):
         pcap_filename = os.path.join(output_path, "packets", eid + "_client.pcap")
 
         # Start a sniffer to capture traffic that the plugin generates
-        with actions.sniffer.Sniffer(pcap_filename, port, logger) as sniff:
+        # with actions.sniffer.Sniffer(pcap_filename, port, logger) as sniff:
+
+        #     # Conditionally initialize the engine
+        #     with engine.Engine(port, args.get("strategy"), server_side=False, environment_id=eid, output_directory=output_path, log_level=args.get("log", "info"), enabled=use_engine) as eng:
+        #         # Wait for the censor to start up, if one is running
+        #         if args.get("wait_for_censor"):
+        #             self.wait_for_censor(args.get("server"), port, eid, output_path)
+
+        #         # Run the plugin
+        #         fitness = self.run(args, logger, engine=eng)
+        #         logger.debug("Plugin client has finished.")
+        #     #    if use_engine:
+        #     #        fitness = actions.utils.punish_fitness(fitness, logger, eng)
+
+        
+        #with actions.sniffer.Sniffer(pcap_filename, port, logger) as sniff:
 
             # Conditionally initialize the engine
-            with engine.Engine(port, args.get("strategy"), server_side=False, environment_id=eid, output_directory=output_path, log_level=args.get("log", "info"), enabled=use_engine) as eng:
-                # Wait for the censor to start up, if one is running
-                if args.get("wait_for_censor"):
-                    self.wait_for_censor(args.get("server"), port, eid, output_path)
-
-                # Run the plugin
-                fitness = self.run(args, logger, engine=eng)
-                logger.debug("Plugin client has finished.")
-                if use_engine:
-                    fitness = actions.utils.punish_fitness(fitness, logger, eng)
+        tick0=time.time()
+        
+        with engine.Engine(port, args.get("strategy"), server_side=False, environment_id=eid, output_directory=output_path, log_level=args.get("log", "info"), enabled=use_engine) as eng:
+             # Wait for the censor to start up, if one is running
+            if args.get("wait_for_censor"):
+                self.wait_for_censor(args.get("server"), port, eid, output_path)
+             # Run the plugin
+            fitness = self.run(args, logger, engine=eng)
+            logger.debug("Plugin client has finished.")
+            if use_engine:
+                   fitness = actions.utils.punish_fitness(fitness, logger, eng)
+        tick1=time.time()
+        print('plugin_client time spent:',tick1-tick0)
 
         # If fitness files are disabled, just return
         if args.get("no_fitness_file"):
             return fitness
 
         logger.debug("Fitness: %d", fitness)
-
+        tick0=time.time()
         actions.utils.write_fitness(fitness, output_path, eid)
+        tick1=time.time()
+        print('plugin_client write_fitness time spent:',tick1-tick0)
+        tick11=time.time()
+        print('plugin_client start total time spent:',tick11-tick00)
         return fitness
 
     def wait_for_censor(self, serverip, port, environment_id, log_dir):
@@ -127,4 +155,7 @@ def main(command):
         client_plugin.start(plugin_args, logger)
 
 if __name__ == "__main__":
+    tick0=time.time()
     main(sys.argv[1:])
+    tick1=time.time()
+    print('plugin_client main time spent:',tick1-tick0)

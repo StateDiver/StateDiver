@@ -24,3 +24,8 @@ class DropAction(Action):
         """
         logger.debug("  - Dropping given packet.")
         return None, None
+    def str_without_value(self):
+        """
+        Returns a string 
+        """
+        return str(self)

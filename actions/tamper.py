@@ -10,9 +10,12 @@ modifications (particularly header modifications). It supports the following pri
 - compress: performs DNS decompression on the packet (if applicable)
 """
 
+from sys import flags
 from actions.action import Action
 import actions.utils
 from layers.dns_layer import DNSLayer
+import layers
+from scapy.all import send, sr1, sr, TCP, IP, Raw
 
 import random
 
@@ -21,8 +24,8 @@ import random
 SUPPORTED_PRIMITIVES = ["corrupt", "replace", "add", "compress"]
 
 # Tamper primitives we can mutate to by default
-ACTIVATED_PRIMITIVES = ["replace", "corrupt"]
-
+ACTIVATED_PRIMITIVES = ["replace"]    # from replace,corrupt  to  replace  
+# [5.1] ban corrupt  [5.17] ban add
 
 class TamperAction(Action):
     """
@@ -51,7 +54,8 @@ class TamperAction(Action):
             self._mutate_tamper_type()
 
         if not self.field:
-            self._mutate(environment_id)
+            #self._mutate(environment_id)
+            self._mutate_old(environment_id)
 
     def mutate(self, environment_id=None):
         """
@@ -62,19 +66,78 @@ class TamperAction(Action):
         if pick < 0.2:
            self._mutate_tamper_type()
         else:
-            self._mutate(environment_id)
+            self._mutate_old(environment_id)
 
     def _mutate_tamper_type(self):
+
         """
         Randomly picks a tamper type to change to.
         """
-        self.tamper_type = random.choice(ACTIVATED_PRIMITIVES)
+        self.tamper_type = random.choice(ACTIVATED_PRIMITIVES)  #replace,corrupt,add 
         if self.tamper_type == "compress":
             self.tamper_proto_str = "DNS"
             self.tamper_proto = actions.utils.string_to_protocol(self.tamper_proto_str)
             self.field = "qd"
+        _add_tample_values = [
+            -1,
+            -200,
+            -2147483648,
+            0,
+            1,
+            2,
+            200,
+        ]
+        if self.tamper_type == "add":
+            self.tamper_value = random.choice(_add_tample_values)
 
     def _mutate(self, environment_id):
+        """
+        Mutates this action using:
+         - previously seen packets with 50% probability
+         - a fuzzed packet with 50% probability
+        """
+
+        _fields = [    
+        'reserved',  
+        'urgptr',
+        'options-eol',
+        'options-nop',
+        'options-mss',
+        'options-wscale',
+        'options-sackok',
+        'options-sack',
+        'options-timestamp',
+        'options-altchksum',
+        'options-altchksumopt',
+        'options-md5header',
+        'options-uto',
+        'chksum'
+
+        ]   
+        pick = random.random()
+        if pick < 0.3:
+            self.field = 'flags'
+        elif  pick < 0.9 and pick >= 0.3:
+            self.field = random.choice(_fields)
+        else: 
+            self.field = random.choice(_fields)
+         # 
+        #else:
+        #    proto, field, value = actions.utils.get_from_fuzzed_or_real_packet(environment_id, 0.5)
+        #    self.tamper_proto = proto
+        #    self.tamper_proto_str = proto.__name__
+        #    if (proto.__name__!='DNS'):
+        #        self.tamper_proto_str='TCP'
+        #        self.field = None
+        #    else:
+        #        self.field = field   
+
+        packet = IP(dst='8.8.8.8')/TCP(dport=53,flags='S')
+        self.tamper_value = layers.packet.Packet(packet).gen(self.tamper_proto_str, self.field) 
+        #self.tamper_value = None  
+        #print(self.tamper_value)
+
+    def _mutate_old(self, environment_id):    # old version of mutate
         """
         Mutates this action using:
          - previously seen packets with 50% probability
@@ -84,8 +147,11 @@ class TamperAction(Action):
         proto, field, value = actions.utils.get_from_fuzzed_or_real_packet(environment_id, 0.5)
         self.tamper_proto = proto
         self.tamper_proto_str = proto.__name__
-        self.field = field
+        self.field = field  
         self.tamper_value = value
+        
+
+
 
     def tamper(self, packet, logger):
         """
@@ -98,11 +164,13 @@ class TamperAction(Action):
         # Retrieve the old value of the field for logging purposes
         old_value = packet.get(self.tamper_proto_str, self.field)
 
-        new_value = self.tamper_value
+        new_value = self.tamper_value  
         # If corrupting the packet field, generate a value for it
         try:
             if self.tamper_type == "corrupt":
                 new_value = packet.gen(self.tamper_proto_str, self.field)
+            #elif self.tamper_type == "replace":   
+            #    new_value = packet.gen(self.tamper_proto_str, self.field)
             elif self.tamper_type == "add":
                 new_value = int(self.tamper_value) + int(old_value)
             elif self.tamper_type == "compress":
@@ -116,19 +184,19 @@ class TamperAction(Action):
 
         logger.debug("  - Tampering %s field `%s` (%s) by %s (to %s)" %
                      (self.tamper_proto_str, self.field, str(old_value), self.tamper_type, str(new_value)))
-
-        packet.set(self.tamper_proto_str, self.field, new_value)
+        #self.tamper_value = new_value
+        packet.set(self.tamper_proto_str, self.field, new_value) 
 
         return packet
 
-    def run(self, packet, logger):
+    def run(self, packet, logger): 
         """
         The tamper action runs its tamper procedure on the given packet, and
         returns the edited packet down the left branch.
 
         Nothing is returned to the right branch.
         """
-        return self.tamper(packet, logger), None
+        return self.tamper(packet, logger), None  
 
     def __str__(self):
         """
@@ -143,6 +211,20 @@ class TamperAction(Action):
             s += "{%s:%s:compress}" % ("DNS", "qd", )
 
         return s
+    
+    def str_without_value(self):
+        """
+        Defines string representation for this object  without value.
+        """
+        s = Action.__str__(self)
+        if self.tamper_type == "corrupt":
+            s += "{%s:%s:%s}" % (self.tamper_proto_str, self.field, self.tamper_type)
+        elif self.tamper_type in ["replace", "add"]:
+            s += "{%s:%s:%s}" % (self.tamper_proto_str, self.field, self.tamper_type)
+        elif self.tamper_type == "compress":
+            s += "{%s:%s:compress}" % ("DNS", "qd", )
+
+        return s        
 
     def parse(self, string, logger):
         """

@@ -11,8 +11,10 @@ import layers.dnsqr_layer
 _SUPPORTED_LAYERS = [
     layers.ip_layer.IPLayer,
     layers.tcp_layer.TCPLayer,
-    layers.udp_layer.UDPLayer
-]  # ban layers.dns_layer.DNSLayer  layers.dnsqr_layer.DNSQRLayer
+    layers.udp_layer.UDPLayer,
+    #layers.dns_layer.DNSLayer,
+    #layers.dnsqr_layer.DNSQRLayer
+]
 SUPPORTED_LAYERS = _SUPPORTED_LAYERS
 
 
@@ -231,7 +233,7 @@ class Packet():
         Retrieves a random protocol, field, and value from this packet.
         """
         layer = self.get_random_layer()
-        field, value = layer.get_random()
+        field, value = layer.get_random() #value从一个rand中随机挑选一个返回
         return layer.protocol, field, value
 
     @staticmethod
@@ -242,7 +244,7 @@ class Packet():
         # layer is a Geneva Layer class - to instantiate it, we must give it a layer
         # to use. Every Geneva Layer stores the underlying scapy layer it wraps,
         # so simply invoke that as a default.
-        layer = random.choice(SUPPORTED_LAYERS)
+        layer = random.choice(SUPPORTED_LAYERS) # 包含fields、options_names等内容
         layer_obj = layer(layer.protocol())
         field, value = layer_obj.gen_random()
         return layer.protocol, field, value

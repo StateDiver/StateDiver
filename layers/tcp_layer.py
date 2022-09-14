@@ -11,10 +11,11 @@ class TCPLayer(Layer):
     name = "TCP"
     protocol = TCP
     _fields = [
-        'sport',
-        'dport',
+        #'sport',
+        #'dport',
         'seq',
         'ack',
+        'dataofs',
         'reserved',
         'flags',
         'window',
@@ -30,8 +31,9 @@ class TCPLayer(Layer):
         'options-altchksum',
         'options-altchksumopt',
         'options-md5header',
-        'options-uto'
-    ]  # ban load & dataofs
+        'options-uto',
+        #'load'
+    ] # ban load  # ban sport dport
     fields = _fields
 
     options_names = {

@@ -23,10 +23,10 @@ class Sniffer():
         self.pcap_thread = None
         self.packet_dumper = None
         self.logger = logger
-        full_path = os.path.dirname(location)
+        # full_path = os.path.dirname(location)
         assert port, "Need to specify a port in order to launch a sniffer"
-        if not os.path.exists(full_path):
-            os.makedirs(full_path)
+        #if not os.path.exists(full_path):
+        #    os.makedirs(full_path)
 
     def __packet_callback(self, scapy_packet):
         """
@@ -41,7 +41,7 @@ class Sniffer():
             return self.stop_sniffing_flag
 
         self.logger.debug(str(packet))
-        self.packet_dumper.write(scapy_packet)
+        # self.packet_dumper.write(scapy_packet)
         return self.stop_sniffing_flag
 
     def __spawn_sniffer(self):
@@ -49,9 +49,9 @@ class Sniffer():
         Saves pcaps to a file. Should be run as a thread.
         Ends when the stop_sniffing_flag is set. Should not be called by user
         """
-        self.packet_dumper = PcapWriter(self.location, append=True, sync=True)
+        #self.packet_dumper = PcapWriter(self.location, append=True, sync=True)
         while(self.stop_sniffing_flag == False):
-            sniff(stop_filter=self.__packet_callback, timeout=1)
+            sniff(stop_filter=self.__packet_callback, timeout=0.1)
 
     def start_sniffing(self):
         """

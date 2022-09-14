@@ -23,3 +23,9 @@ class DuplicateAction(Action):
         Swaps its left and right child
         """
         self.left, self.right = self.right, self.left
+    
+    def str_without_value(self):
+        """
+        Returns a string 
+        """
+        return str(self)

@@ -2,7 +2,7 @@
 Main evolution driver for Geneva (GENetic EVAsion). This file performs the genetic algorithm,
 and relies on the evaluator (evaluator.py) to provide fitness evaluations of each individual.
 """
-
+import pandas as pd
 import argparse
 import copy
 import logging
@@ -11,6 +11,7 @@ import os
 import random
 import subprocess as sp
 import sys
+import math
 
 import actions.strategy
 import actions.tree
@@ -46,8 +47,10 @@ def setup_logger(log_level):
     ga_debug_log = os.path.join(ga_log_dir, "ga_debug.log")
 
     # Configure logging globally
-    formatter = logging.Formatter(fmt='%(asctime)s %(levelname)s:%(message)s', datefmt="%Y-%m-%d %H:%M:%S")
-    logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+    #formatter = logging.Formatter(fmt='%(asctime)s %(levelname)s:%(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+    #logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s', datefmt="%Y-%m-%d %H:%M:%S")
+    formatter = logging.Formatter(fmt='%(asctime)s %(levelname)s:%(message)s')
+    logging.basicConfig(format='%(asctime)s %(levelname)s:%(message)s')
 
     # Set up the root logger
     logger = logging.getLogger("ga_%s" % actions.utils.RUN_DIRECTORY)
@@ -201,18 +204,20 @@ def fitness_function(logger, population, ga_evaluator):
 
     Args:
         logger (:obj:`logging.Logger`): A logger to log with
-        population (list): List of individuals to evaluate
+        population (list): List of individuals to evaluate  
         ga_evaluator (:obj:`evaluator.Evaluator`): An evaluator object to evaluate with
 
     Returns:
         list: Population post-evaluation
+
     """
     if ga_evaluator:
+        #分开计算
         offspring_length=len(population)
         return_population=[]
         divide_num=500
         if offspring_length <= divide_num:
-            return_population=ga_evaluator.evaluate(population)
+            return_population,whether_success=ga_evaluator.evaluate(population,False)
         else:
             count_num=-1
             while offspring_length > divide_num:
@@ -223,6 +228,15 @@ def fitness_function(logger, population, ga_evaluator):
                 offspring_length -=divide_num
             return_population_part,whether_success=ga_evaluator.evaluate(population[divide_num*(count_num+1):], False)
             return_population=return_population+return_population_part
+        while whether_success == False: # bad thing happened, need to do it again
+            logger.info("do ga_evaluator.evaluate again")
+            # kill fd
+            for i in range(5,1000):
+                try:
+                    os.close(i)
+                except:
+                    pass
+            return_population,whether_success=ga_evaluator.evaluate(population,False)
 
         #return ga_evaluator.evaluate(population)
         return return_population
@@ -273,6 +287,778 @@ def selection_tournament(individuals, k, tournsize, fit_attr="fitness"):
         chosen.append(copy.deepcopy(max(aspirants, key=operator.attrgetter(fit_attr))))
     return chosen
 
+def selection_next_generation(logger,individuals, parents):
+    """
+    Select individual from the last generation based on states change
+    Core thought: if one packet in the packets sequence can cause DPI0 state change and don't cause DPI1 state change. That's a good sign
+    
+
+    Args:
+        individuals (list): A list of individuals to select from.
+        parents (list): A list of individuals' parents
+        k (int): The number of individuals to select.
+        tournsize (int): The number of individuals participating in each tournament.
+        fit_attr: The attribute of individuals to use as selection criterion (defaults to "fitness")
+
+    Returns:
+        list: A list of selected individuals.
+    """
+    chosen = []
+    canary_round=False
+    for i in range(len(parents)):
+        individuals[i].father_inconsistent_packet_num=parents[i].inconsistent_packet_num
+        father_strategy=parents[i]
+        if father_strategy.environment_id=='canary':
+            canary_round=True
+            break
+        child_strategy=individuals[i]
+        decide_append_child=False
+        decide_append_father=False
+        decide_great_add_child=False
+        if child_strategy.terminate_by_server == True:
+            # [3.14] for testing we let go this function
+            # logger.info('Terminate by server, maybe it is a bad strategy,we do not add it')
+            # continue
+            pass
+        if father_strategy.inconsistent_packet_num==0 and child_strategy.inconsistent_packet_num!=0:
+            #chosen.append(copy.deepcopy(child_strategy))
+            decide_append_child=True
+            logger.info('F:%d,C:%d. Add child %s.',0,child_strategy.inconsistent_packet_num,str(child_strategy))
+        # father ok child bad
+        if father_strategy.inconsistent_packet_num !=0 and child_strategy.inconsistent_packet_num==0:
+            #chosen.append(copy.deepcopy(father_strategy))
+            decide_append_father=True
+            logger.info('F:%d,C:%d. Add father %s.',father_strategy.inconsistent_packet_num,0,str(father_strategy))
+        # father and child both ok
+        if father_strategy.inconsistent_packet_num !=0 and child_strategy.inconsistent_packet_num!=0:
+            #chosen.append(copy.deepcopy(child_strategy))
+            #chosen.append(copy.deepcopy(father_strategy))
+            decide_append_child=True
+            decide_append_child=True
+            logger.info('F:%d,C:%d. Add father %s. child %s',father_strategy.inconsistent_packet_num,child_strategy.inconsistent_packet_num,str(father_strategy),str(child_strategy))
+        # father and child both bad
+        if father_strategy.inconsistent_packet_num ==0 and child_strategy.inconsistent_packet_num==0:
+            #chosen.append(copy.deepcopy(father_strategy))
+            decide_append_father=True
+            logger.info('F:%d,C:%d. Add father %s.',0,0,str(father_strategy))
+
+        # extra appending 
+        if child_strategy.inconsistent_packet_num!=0:   
+            # means it is compareable
+            for i in child_strategy.change_happened_packet_num:
+                print('result_snort_client:',child_strategy.result_snort)
+                #print('result_snort_server:',child_strategy.result_snort)
+                print('result_snort_suricata:',child_strategy.result_suricata)
+                print('child_strategy.change_happened_packet_num:',child_strategy.change_happened_packet_num)
+                print('child_strategy.inconsistent_packet_num:',child_strategy.inconsistent_packet_num)
+                print('len of child_strategy.result_snort:',len(child_strategy.result_snort))
+                print('len of child_strategy.result_suricata:',len(child_strategy.result_suricata))
+                try:
+                    end_state_snort_client=child_strategy.result_snort[i].client_end_stage
+                    end_state_snort_server=child_strategy.result_snort[i].server_end_stage
+                    end_state_suricata=child_strategy.result_suricata[i].end_stage
+                # make compare
+              
+                #if (end_state_snort_client=='ESTABLISHED' or end_state_snort_server =='ESTABLISHED') and end_state_suricata !='established':
+                #    flag=True
+                #    logger.info('INTERESTING HIT state_snort_client:%s state_snort_server:%s VS state_suricata:%s',end_state_snort_client,end_state_snort_server,end_state_suricata)
+                #    break
+                    if (end_state_snort_client!='ESTABLISHED' and end_state_snort_server !='ESTABLISHED') and end_state_suricata =='established':
+                        decide_great_add_child=True
+                        logger.info('INTERESTING HIT state_snort_client:%s state_snort_server:%s VS state_suricata:%s',end_state_snort_client,end_state_snort_server,end_state_suricata)
+                        break
+                except:
+                    print('Crash!')
+                    print('i=',str(i))
+                    print('change_happened_packet_num:',child_strategy.change_happened_packet_num)
+                    print(child_strategy.result_snort[i],'snort_len:',len(child_strategy.result_snort[i]))
+                    print(child_strategy.result_suricata[i],'suricata_len',len(child_strategy.result_suricata[i]))
+                    raise
+
+
+
+        if decide_append_child==True:
+            chosen.append(copy.deepcopy(child_strategy))
+            
+        if decide_append_father==True:
+            chosen.append(copy.deepcopy(father_strategy))
+
+        if decide_great_add_child==True:
+            logger.info('Five time added %s',str(child_strategy))
+            chosen.append(copy.deepcopy(child_strategy))
+            chosen.append(copy.deepcopy(child_strategy))
+            chosen.append(copy.deepcopy(child_strategy))
+            chosen.append(copy.deepcopy(child_strategy))
+            chosen.append(copy.deepcopy(child_strategy))
+    if canary_round == True:
+        return individuals            
+            
+
+
+    return chosen
+
+def selection_next_generation_vertical_overall(logger,individuals, parents, gen):
+    """
+    Select individual from the last generation based on states change
+    Core thought: if one packet in the packets sequence can cause DPI0 state change and don't cause DPI1 state change. That's a good sign
+    ***vertical-overall-version***
+
+    Args:
+        individuals (list): A list of individuals to select from.
+        parents (list): A list of individuals' parents
+        gen (int): 当前的轮次
+        k (int): The number of individuals to select.
+        tournsize (int): The number of individuals participating in each tournament.
+        fit_attr: The attribute of individuals to use as selection criterion (defaults to "fitness")
+
+    Returns:
+        list: A list of selected individuals.
+    """
+
+    chosen = []
+    father_chosen_hash = []
+    canary_round=False
+    for i in range(len(parents)):
+        individuals[i].father_inconsistent_packet_num=parents[i].inconsistent_packet_num
+        father_strategy=parents[i]
+        if father_strategy.environment_id=='canary':
+            canary_round=True
+            break
+        child_strategy=individuals[i]  
+        child_strategy.first_added_time = gen
+        
+        child_strategy.father_suricata_state_change_overall=father_strategy.suricata_state_change_overall
+        child_strategy.father_snort_state_change_overall_client=father_strategy.snort_state_change_overall_client
+        child_strategy.father_snort_state_change_overall_server=father_strategy.snort_state_change_overall_server
+        
+        decide_append_child=False
+        decide_append_father=False
+        decide_great_add_child=False
+        snort_overall_change = False
+        suricata_overall_change = False
+        child_add_more = False
+        father_add_more = False
+        # father_strartgy vs child_strategy change/not change?
+        if father_strategy.snort_state_change_overall_client !=child_strategy.snort_state_change_overall_client or father_strategy.snort_state_change_overall_server !=child_strategy.snort_state_change_overall_server:
+            snort_overall_change=True
+        else:
+            snort_overall_change=False
+        if father_strategy.suricata_state_change_overall !=child_strategy.suricata_state_change_overall:
+            suricata_overall_change=True
+        else:
+            suricata_overall_change=False
+        
+        
+        if child_strategy.suricata_state_change_overall == [] or child_strategy.snort_state_change_overall_client == [] or child_strategy.snort_state_change_overall_server == []:
+            suricata_overall_change=False
+            snort_overall_change=False
+        minor_add_flag=False 
+        
+        if suricata_overall_change or snort_overall_change: 
+            parent_string=str(father_strategy.snort_state_change_overall_client)+str(father_strategy.snort_state_change_overall_server)+str(father_strategy.suricata_state_change_overall)
+            child_string=str(child_strategy.snort_state_change_overall_client)+str(child_strategy.snort_state_change_overall_server)+str(child_strategy.suricata_state_change_overall)
+            hash_pc=hash(parent_string+child_string)
+            hash_cp=hash(child_string+parent_string)
+            str_hash_father=str(father_strategy)
+            str_hash_child=str(child_strategy)
+            
+            state_change_happened_before=False
+            if (hash_pc in father_strategy.before_hash) or (hash_cp in child_strategy.before_hash) or (hash_pc in child_strategy.before_hash) or (hash_cp in father_strategy.before_hash):
+                logger.info('hash state happen before! doing hash name compare') 
+                state_change_happend_before=True
+
+                if str_hash_father in child_strategy.before_hash_name or str_hash_child in father_strategy.before_hash_name:
+                    logger.info('hash name compare fail! find same strategy! We do not add')
+                    snort_overall_change = False
+                    suricata_overall_change = False
+                else:
+                    minor_add_flag = True
+                    logger.info('same state change but different strategy name! minor_add')
+                    father_strategy.before_hash.append(hash_pc)
+                    father_strategy.before_hash.append(hash_cp)
+                    child_strategy.before_hash.append(hash_pc)
+                    child_strategy.before_hash.append(hash_cp)
+                    father_strategy.before_hash_name.append(str_hash_child)
+                    father_strategy.before_hash_name.append(str_hash_father)
+                    child_strategy.before_hash_name.append(str_hash_child)
+                    child_strategy.before_hash_name.append(str_hash_father)
+
+
+
+                    father_strategy.before_hash=list(set(father_strategy.before_hash))  # 去重
+                    child_strategy.before_hash=list(set(child_strategy.before_hash))
+                    father_strategy.before_hash_name=list(set(father_strategy.before_hash_name))
+                    child_strategy.before_hash_name=list(set(child_strategy.before_hash_name))
+
+
+                
+            else:
+                logger.info('hash state pass! add hash state file')
+                # hash_pc 
+                father_strategy.before_hash.append(hash_pc)
+                father_strategy.before_hash.append(hash_cp)
+                child_strategy.before_hash.append(hash_pc)
+                child_strategy.before_hash.append(hash_cp)
+                father_strategy.before_hash_name.append(str_hash_child)
+                father_strategy.before_hash_name.append(str_hash_father)
+                child_strategy.before_hash_name.append(str_hash_child)
+                child_strategy.before_hash_name.append(str_hash_father)
+        
+                father_strategy.before_hash=list(set(father_strategy.before_hash))  
+                child_strategy.before_hash=list(set(child_strategy.before_hash))
+                father_strategy.before_hash_name=list(set(father_strategy.before_hash_name))
+                child_strategy.before_hash_name=list(set(child_strategy.before_hash_name))
+
+        # snort yes suricata no | suricata yes snort no   very very interesting
+        if snort_overall_change ^ suricata_overall_change:
+            father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/2)  
+            child_strategy.mutate_weight+=2   
+            child_strategy.saved_reason='++'
+            logger.info('very very interesting')
+           
+
+            if minor_add_flag:
+                logger.info('minor_add_flag find in very very interesting')
+                child_strategy.mutate_weight-=2
+            else:
+                if father_strategy.no_good_count >=2:
+                    father_strategy.no_good_count -= 2  
+                else:
+                    father_strategy.no_good_count = 0
+                child_strategy.no_good_count = 0
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+
+            child_add_more=True
+        # snort yes suricata yes   little  interesting
+        if snort_overall_change==True and suricata_overall_change==True:
+            #chosen.append(copy.deepcopy(child_strategy))
+            father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/2) 
+            logger.info('little interesting')
+            child_strategy.saved_reason='+'
+            if minor_add_flag:
+                logger.info('minor_add_flag find in little interesting')
+                if child_strategy.mutate_weight>=1: child_strategy.mutate_weight-=1
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+
+        # snort no suricata no   bad 
+        if snort_overall_change ==False and suricata_overall_change==False:
+            father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/3) 
+            father_strategy.no_good_count+=1
+            logger.info('father_strategy no_good_count add, from %d to %d',father_strategy.no_good_count-1,father_strategy.no_good_count)
+            child_strategy.mutate_weight=0
+            logger.info('bad')
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+
+
+        # add strategy
+        
+        if father_add_more:
+            for i in range(0,father_strategy.mutate_weight):
+                chosen.append(copy.deepcopy(father_strategy))
+                logger.info('add father_strategy:')
+                logger.info('no_good_count:%d ; mutate_weight:%d',father_strategy.no_good_count,father_strategy.mutate_weight)
+        else:
+            if father_strategy.no_good_count<=4:
+                if hash(str(father_strategy)) not in father_chosen_hash:
+
+                    chosen.append(copy.deepcopy(father_strategy))
+                    logger.info('add father_strategy:')
+                    father_chosen_hash.append(hash(str(father_strategy)))
+                    logger.info('no_good_count:%d ; mutate_weight:%d',father_strategy.no_good_count,father_strategy.mutate_weight)
+                else:
+                    logger.info('father_strategy add once, we do not add again')
+            else:
+                logger.info('no_good_count excess, do not add father')
+        
+        for i in range(0,child_strategy.mutate_weight):
+            chosen.append(copy.deepcopy(child_strategy))
+            logger.info('add child_strategy:')
+            logger.info('no_good_count:%d ; mutate_weight:%d',child_strategy.no_good_count,child_strategy.mutate_weight)
+ 
+
+        
+    # canary round(father_strategy doesn't run/ can not compare)
+    if canary_round == True:
+        return individuals
+
+            
+
+    logger.info('chosen length: %d',len(chosen))
+    
+    return chosen
+
+def selection_next_generation_vertical_overall_afl_mode(logger,individuals, seed_ind, gen):
+    """
+    Select individual from the last generation based on states change
+    Core thought: if one packet in the packets sequence can cause DPI0 state change and don't cause DPI1 state change. That's a good sign
+    ***vertical-overall-version***
+
+
+    Args:
+        individuals (list): A list of individuals to select from.
+        seed_ind (Strategy): Current parent individual to compare with
+        gen (int):
+        k (int): The number of individuals to select.
+        tournsize (int): The number of individuals participating in each tournament.
+        fit_attr: The attribute of individuals to use as selection criterion (defaults to "fitness")
+
+    Returns:
+        list: A list of selected individuals. 
+    """
+
+    chosen = []
+    father_chosen_hash = []
+    canary_round=False
+    father_strategy=seed_ind
+    handicap = 0
+    for i in range(len(individuals)):
+        logger.info('---------------------------------------------------------')
+        if individuals[i].useless == True:
+            continue
+        individuals[i].father_inconsistent_packet_num=father_strategy.inconsistent_packet_num
+
+        child_strategy=individuals[i]  
+        child_strategy.first_added_time = gen
+        #
+        child_strategy.father_suricata_state_change_overall=father_strategy.suricata_state_change_overall
+        child_strategy.father_snort_state_change_overall_client=father_strategy.snort_state_change_overall_client
+        child_strategy.father_snort_state_change_overall_server=father_strategy.snort_state_change_overall_server
+        child_strategy.depth = father_strategy.depth + 1
+        decide_append_child=False
+        decide_append_father=False
+        decide_great_add_child=False
+        snort_overall_change = False
+        suricata_overall_change = False
+        child_add_more = False
+        father_add_more = False
+        # father_strartgy vs child_strategy change/not change?
+        if father_strategy.snort_state_change_overall_client !=child_strategy.snort_state_change_overall_client or father_strategy.snort_state_change_overall_server !=child_strategy.snort_state_change_overall_server:
+            snort_overall_change=True
+        else:
+            snort_overall_change=False
+        if father_strategy.suricata_state_change_overall !=child_strategy.suricata_state_change_overall:
+            suricata_overall_change=True
+        else:
+            suricata_overall_change=False
+        
+        
+        if child_strategy.suricata_state_change_overall == [] or child_strategy.snort_state_change_overall_client == [] or child_strategy.snort_state_change_overall_server == []:
+            suricata_overall_change=False
+            snort_overall_change=False
+        minor_add_flag=False 
+        
+        if suricata_overall_change or snort_overall_change: 
+            parent_string=str(father_strategy.snort_state_change_overall_client)+str(father_strategy.snort_state_change_overall_server)+str(father_strategy.suricata_state_change_overall)
+            child_string=str(child_strategy.snort_state_change_overall_client)+str(child_strategy.snort_state_change_overall_server)+str(child_strategy.suricata_state_change_overall)
+            hash_pc=hash(parent_string+child_string)
+            hash_cp=hash(child_string+parent_string)
+            str_hash_father=str(father_strategy)
+            str_hash_child=str(child_strategy)
+            
+            state_change_happened_before=False
+            if (hash_pc in father_strategy.before_hash) or (hash_cp in child_strategy.before_hash) or (hash_pc in child_strategy.before_hash) or (hash_cp in father_strategy.before_hash):
+                logger.info('hash state happen before! doing hash name compare') 
+                state_change_happend_before=True
+
+                if str_hash_father in child_strategy.before_hash_name or str_hash_child in father_strategy.before_hash_name:
+                    logger.info('hash name compare fail! find same strategy! We do not add')
+                    snort_overall_change = False
+                    suricata_overall_change = False
+                else:
+                    minor_add_flag = True
+                    logger.info('same state change but different strategy name! minor_add')
+                    father_strategy.before_hash.append(hash_pc)
+                    father_strategy.before_hash.append(hash_cp)
+                    child_strategy.before_hash.append(hash_pc)
+                    child_strategy.before_hash.append(hash_cp)
+                    father_strategy.before_hash_name.append(str_hash_child)
+                    father_strategy.before_hash_name.append(str_hash_father)
+                    child_strategy.before_hash_name.append(str_hash_child)
+                    child_strategy.before_hash_name.append(str_hash_father)
+
+
+
+                    father_strategy.before_hash=list(set(father_strategy.before_hash))  
+                    child_strategy.before_hash=list(set(child_strategy.before_hash))
+                    father_strategy.before_hash_name=list(set(father_strategy.before_hash_name))
+                    child_strategy.before_hash_name=list(set(child_strategy.before_hash_name))
+
+
+                
+            else:
+                logger.info('hash state pass! add hash state file It is a new hash state!')
+                # hash_pc 
+                father_strategy.before_hash.append(hash_pc)
+                father_strategy.before_hash.append(hash_cp)
+                child_strategy.before_hash.append(hash_pc)
+                child_strategy.before_hash.append(hash_cp)
+                father_strategy.before_hash_name.append(str_hash_child)
+                father_strategy.before_hash_name.append(str_hash_father)
+                child_strategy.before_hash_name.append(str_hash_child)
+                child_strategy.before_hash_name.append(str_hash_father)
+        
+                father_strategy.before_hash=list(set(father_strategy.before_hash))  
+                child_strategy.before_hash=list(set(child_strategy.before_hash))
+                father_strategy.before_hash_name=list(set(father_strategy.before_hash_name))
+                child_strategy.before_hash_name=list(set(child_strategy.before_hash_name))
+
+        # snort yes suricata no | suricata yes snort no   very very interesting
+        if snort_overall_change ^ suricata_overall_change:
+            #father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/2)  
+            child_strategy.mutate_weight+=2   
+            child_strategy.saved_reason='++'
+            logger.info('very very interesting')
+            logger.info('father_ID:%s %s',father_strategy.environment_id,str(father_strategy))
+            logger.info('child_ID:%s %s',child_strategy.environment_id,str(child_strategy))
+            if suricata_overall_change:
+                logger.info(str(father_strategy.suricata_state_change_overall))
+                logger.info(str(child_strategy.suricata_state_change_overall))
+            if snort_overall_change:
+                logger.info(str(father_strategy.snort_state_change_overall_client))
+                logger.info(str(child_strategy.snort_state_change_overall_client))
+                logger.info(str(father_strategy.snort_state_change_overall_server))
+                logger.info(str(child_strategy.snort_state_change_overall_server))
+           
+
+            if minor_add_flag:
+                logger.info('minor_add_flag find in very very interesting')
+                child_strategy.mutate_weight-=2
+            else:
+                if father_strategy.no_good_count >=2:
+                    father_strategy.no_good_count -= 2  
+                else:
+                    father_strategy.no_good_count = 0
+                child_strategy.no_good_count = 0
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+
+            child_add_more=True
+        # snort yes suricata yes   little  interesting
+        if snort_overall_change==True and suricata_overall_change==True:
+            #chosen.append(copy.deepcopy(child_strategy))
+            #father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/2) 
+            logger.info('little interesting')
+            logger.info('father_ID:%s %s',father_strategy.environment_id,str(father_strategy))
+            logger.info('child_ID:%s %s',child_strategy.environment_id,str(child_strategy))
+            if suricata_overall_change:
+                logger.info(str(father_strategy.suricata_state_change_overall))
+                logger.info(str(child_strategy.suricata_state_change_overall))
+            if snort_overall_change:
+                logger.info(str(father_strategy.snort_state_change_overall_client))
+                logger.info(str(child_strategy.snort_state_change_overall_client))
+                logger.info(str(father_strategy.snort_state_change_overall_server))
+                logger.info(str(child_strategy.snort_state_change_overall_server))
+            child_strategy.saved_reason='+'
+            if minor_add_flag:
+                logger.info('minor_add_flag find in little interesting')
+                if child_strategy.mutate_weight>=1: child_strategy.mutate_weight-=1
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+            child_strategy.no_good_count = 0
+        # snort no suricata no   bad 
+        if snort_overall_change ==False and suricata_overall_change==False:
+            #father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/3) 
+            father_strategy.no_good_count+=1
+            logger.info('father_strategy no_good_count add, from %d to %d',father_strategy.no_good_count-1,father_strategy.no_good_count)
+            child_strategy.mutate_weight=0
+            logger.info('bad')
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+            handicap+=1
+
+        # add strategy
+        if child_strategy.saved_reason=='+' or child_strategy.saved_reason=='++':
+            child_strategy.handicap = copy.deepcopy(handicap)
+            chosen.append(copy.deepcopy(child_strategy))  
+            handicap-=1
+
+
+        # if father_add_more:
+        #     for i in range(0,father_strategy.mutate_weight):
+        #         chosen.append(copy.deepcopy(father_strategy))
+        #         logger.info('add father_strategy:')
+        #         logger.info('no_good_count:%d ; mutate_weight:%d',father_strategy.no_good_count,father_strategy.mutate_weight)
+        # else:
+        #     if father_strategy.no_good_count<=4:
+        #         if hash(str(father_strategy)) not in father_chosen_hash:
+
+        #             chosen.append(copy.deepcopy(father_strategy))
+        #             logger.info('add father_strategy:')
+        #             father_chosen_hash.append(hash(str(father_strategy)))
+        #             logger.info('no_good_count:%d ; mutate_weight:%d',father_strategy.no_good_count,father_strategy.mutate_weight)
+        #         else:
+        #             logger.info('father_strategy add once, we do not add again')
+        #     else:
+        #         logger.info('no_good_count excess, do not add father')
+        
+        # for i in range(0,child_strategy.mutate_weight):
+        #     chosen.append(copy.deepcopy(child_strategy))
+        #     logger.info('add child_strategy:')
+        #     logger.info('no_good_count:%d ; mutate_weight:%d',child_strategy.no_good_count,child_strategy.mutate_weight)
+ 
+
+        
+    # canary round(father_strategy doesn't run/ can not compare)
+    # if canary_round == True:
+    #     return individuals
+
+    for i in range(len(chosen)):
+        chosen[i].before_hash=copy.deepcopy(father_strategy.before_hash)
+        chosen[i].before_hash_name=copy.deepcopy(father_strategy.before_hash_name)
+        chosen[i].perf_score = calculate_score(chosen[i])
+            
+
+    logger.info('chosen length: %d',len(chosen))
+    
+    #if len(chosen)> 20000:  
+    #    chosen=chosen[:20000]
+    #    logger.info('chosen exceed, shrink to 20000')
+    return chosen
+
+def calculate_score(individual):
+    """
+    Like afl, we calculate mutate weight based on individual's depth handicap and init mutate_weight
+
+    Args:
+        individual (Strategy): Single Strategy
+    """
+    if individual.mutate_weight <=8: perf_score = 1000     # 8 100 |2
+    #elif individual.mutate_weight <=4: perf_score = 200
+    elif individual.mutate_weight <=16: perf_score = 1500   # 16 200 | 8 400
+    elif individual.mutate_weight <=24: perf_score = 2000  # 24 400 | 12 800
+    else :                              perf_score = 3000   # 800 | 1200
+
+    # Adjust score based on handicap . Handicap is proportional to how late in the game we learned about this path. Latecommers are allowed to run for a bit longer 
+    # until they catch up 
+    if (individual.handicap >= 4):
+        perf_score *=2     # 4
+    elif (individual.handicap):
+        perf_score *=1     # 2
+
+    # Adjust score based on input depth , under the assumption that fuzzing deeper test cases is more likely to reveal stuff that can't be discovered with traditional fuzzers
+
+    if   individual.depth < 4 : pass
+    elif individual.depth >=4 and individual.depth <=7 : perf_score*=1.3  # >=4 <=7 2
+    elif individual.depth >=8 and individual.depth <=13 : perf_score*=2   # 3
+    elif individual.depth >=14 and individual.depth <=25 : perf_score*=3  # 4
+    else :                                                 perf_score*=4  # 5
+
+    # reduce + mutate_time
+    if individual.saved_reason == '+':
+        perf_score = perf_score/2
+    # Make sure that we don't go over limit
+    if (perf_score > 40 * 100) : perf_score = 4000
+
+    return perf_score/2
+
+def selection_next_generation_vertical_overall_afl_mode_new(logger,individuals, seed_ind, gen):
+    """
+    Select individual from the last generation based on states change
+    Core thought: if one packet in the packets sequence can cause DPI0 state change and don't cause DPI1 state change. That's a good sign
+    ***vertical-overall-version***
+
+
+    Args:
+        individuals (list): A list of individuals to select from.
+        seed_ind (Strategy): Current parent individual to compare with
+        gen (int): 
+        k (int): The number of individuals to select.
+        tournsize (int): The number of individuals participating in each tournament.
+        fit_attr: The attribute of individuals to use as selection criterion (defaults to "fitness")
+
+    Returns:
+        list: A list of selected individuals. 
+    """
+
+    chosen = []
+    father_chosen_hash = []
+    canary_round=False
+    father_strategy=seed_ind
+    handicap = 0
+    for i in range(len(individuals)):
+        print(individuals[i].pretty_print_partial())
+        logger.info('---------------------------------------------------------')
+        if individuals[i].useless == True:
+            logger.info('This individual\'s useless symbol is True, we continue to next one.')
+            continue
+        if str(individuals[i])==r' \/ ':  
+            logger.info('This individual is empty strategy, we continue to next one.')
+            continue
+        if len(individuals[i].suricata_state_change_overall)==1 and len(individuals[i].snort_state_change_overall_client)==1 and len(individuals[i].snort_state_change_overall_server)==1:
+            logger.info('This individual only has one state. negative. we continue to next one.')
+    
+        action_tree_count=0
+        for action_tree in individuals[i].out_actions:
+            action_tree_count+=1
+        if action_tree_count>3:
+            logger.info('This individual contains more than three action tree, we continue to next one')
+            continue
+        #individuals[i].father_inconsistent_packet_num=father_strategy.inconsistent_packet_num
+
+        child_strategy=individuals[i] 
+        child_strategy.first_added_time = gen
+      
+        child_strategy.father_suricata_state_change_overall=father_strategy.suricata_state_change_overall
+        child_strategy.father_snort_state_change_overall_client=father_strategy.snort_state_change_overall_client
+        child_strategy.father_snort_state_change_overall_server=father_strategy.snort_state_change_overall_server
+        child_strategy.depth = father_strategy.depth + 1
+        decide_append_child=False
+        decide_append_father=False
+        decide_great_add_child=False
+        snort_overall_change = False
+        suricata_overall_change = False
+        child_add_more = False
+        father_add_more = False
+        # father_strartgy vs child_strategy change/not change?
+        if father_strategy.snort_state_change_overall_client !=child_strategy.snort_state_change_overall_client or father_strategy.snort_state_change_overall_server !=child_strategy.snort_state_change_overall_server:
+            snort_overall_change=True
+        else:
+            snort_overall_change=False
+        if father_strategy.suricata_state_change_overall !=child_strategy.suricata_state_change_overall:
+            suricata_overall_change=True
+        else:
+            suricata_overall_change=False
+        
+        
+        if child_strategy.suricata_state_change_overall == [] or child_strategy.snort_state_change_overall_client == [] or child_strategy.snort_state_change_overall_server == []:
+            suricata_overall_change=False
+            snort_overall_change=False
+        minor_add_flag=False 
+        
+        if suricata_overall_change or snort_overall_change: 
+            parent_string=str(father_strategy.snort_state_change_overall_client)+str(father_strategy.snort_state_change_overall_server)+str(father_strategy.suricata_state_change_overall)
+            child_string=str(child_strategy.snort_state_change_overall_client)+str(child_strategy.snort_state_change_overall_server)+str(child_strategy.suricata_state_change_overall)
+            hash_pc=hash(parent_string+child_string) 
+            hash_cp=hash(child_string+parent_string)
+            
+            str_hash_father=father_strategy.pretty_print_partial()
+            str_hash_child=child_strategy.pretty_print_partial()
+            
+            state_change_happened_before=False
+            if (hash_pc in father_strategy.before_hash) or (hash_cp in child_strategy.before_hash) or (hash_pc in child_strategy.before_hash) or (hash_cp in father_strategy.before_hash):
+                logger.info('hash state happen before! doing hash name compare') 
+                state_change_happened_before=True
+
+                if str_hash_father in child_strategy.before_hash_name or str_hash_child in father_strategy.before_hash_name:
+                    logger.info('hash name compare fail! find same form strategy! We do not add')
+                    snort_overall_change = False
+                    suricata_overall_change = False
+                else:
+                    minor_add_flag = True
+                    logger.info('same state change but different strategy name! minor_add')
+                    father_strategy.before_hash.append(hash_pc)
+                    father_strategy.before_hash.append(hash_cp)
+                    child_strategy.before_hash.append(hash_pc)
+                    child_strategy.before_hash.append(hash_cp)
+                    father_strategy.before_hash_name.append(str_hash_child)
+                    father_strategy.before_hash_name.append(str_hash_father)
+                    child_strategy.before_hash_name.append(str_hash_child)
+                    child_strategy.before_hash_name.append(str_hash_father)
+
+
+
+                    father_strategy.before_hash=list(set(father_strategy.before_hash))  
+                    child_strategy.before_hash=list(set(child_strategy.before_hash))
+                    father_strategy.before_hash_name=list(set(father_strategy.before_hash_name)) 
+                    child_strategy.before_hash_name=list(set(child_strategy.before_hash_name))
+
+
+                
+            else: 
+                logger.info('hash state pass! add hash state file')
+                # hash_pc 
+                father_strategy.before_hash.append(hash_pc)
+                father_strategy.before_hash.append(hash_cp)
+                child_strategy.before_hash.append(hash_pc)
+                child_strategy.before_hash.append(hash_cp)
+                father_strategy.before_hash_name.append(str_hash_child)
+                father_strategy.before_hash_name.append(str_hash_father)
+                child_strategy.before_hash_name.append(str_hash_child)
+                child_strategy.before_hash_name.append(str_hash_father)
+        
+                father_strategy.before_hash=list(set(father_strategy.before_hash))  
+                child_strategy.before_hash=list(set(child_strategy.before_hash))
+                father_strategy.before_hash_name=list(set(father_strategy.before_hash_name)) 
+                child_strategy.before_hash_name=list(set(child_strategy.before_hash_name))
+
+        # snort yes suricata no | suricata yes snort no   very very interesting
+        if snort_overall_change==True and suricata_overall_change==False:
+            #father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/2)  
+            child_strategy.mutate_weight+=2   
+            child_strategy.saved_reason='++'
+            logger.info('very very interesting')
+            logger.info('father_ID:%s %s',father_strategy.environment_id,str(father_strategy))
+            logger.info('child_ID:%s %s',child_strategy.environment_id,str(child_strategy))
+            logger.info('father_ID state_hash num: %d,name hash num: %d',len(father_strategy.before_hash),len(father_strategy.before_hash_name))
+            logger.info('child_ID state_hash num: %d,name hash num: %d',len(child_strategy.before_hash),len(child_strategy.before_hash_name))
+            #if suricata_overall_change:
+            logger.info(str(father_strategy.suricata_state_change_overall))
+            logger.info(str(child_strategy.suricata_state_change_overall))
+            #if snort_overall_change:
+            logger.info(str(father_strategy.snort_state_change_overall_client))
+            logger.info(str(child_strategy.snort_state_change_overall_client))
+            logger.info(str(father_strategy.snort_state_change_overall_server))
+            logger.info(str(child_strategy.snort_state_change_overall_server))
+           
+
+            if minor_add_flag:
+                logger.info('minor_add_flag find in very very interesting')
+                child_strategy.mutate_weight-=2
+            else:
+                if father_strategy.no_good_count >=2:
+                    father_strategy.no_good_count -= 2  
+                else:
+                    father_strategy.no_good_count = 0
+                child_strategy.no_good_count = 0
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+
+            child_add_more=True
+        # snort yes suricata yes   little  interesting
+        if (snort_overall_change==True and suricata_overall_change==True) or (snort_overall_change==False and suricata_overall_change==True):
+            #chosen.append(copy.deepcopy(child_strategy))
+            #father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/2) 
+            logger.info('little interesting')
+            child_strategy.saved_reason='+'
+            logger.info('father_ID:%s %s',father_strategy.environment_id,str(father_strategy))
+            logger.info('child_ID:%s %s',child_strategy.environment_id,str(child_strategy))
+            logger.info('father_ID state_hash num: %d,name hash num: %d',len(father_strategy.before_hash),len(father_strategy.before_hash_name))
+            logger.info('child_ID state_hash num: %d,name hash num: %d',len(child_strategy.before_hash),len(child_strategy.before_hash_name))
+            logger.info(str(father_strategy.suricata_state_change_overall))
+            logger.info(str(child_strategy.suricata_state_change_overall))
+            logger.info(str(father_strategy.snort_state_change_overall_client))
+            logger.info(str(child_strategy.snort_state_change_overall_client))
+            logger.info(str(father_strategy.snort_state_change_overall_server))
+            logger.info(str(child_strategy.snort_state_change_overall_server))
+            if minor_add_flag:
+                logger.info('minor_add_flag find in little interesting')
+                if child_strategy.mutate_weight>=1: child_strategy.mutate_weight-=1
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+            child_strategy.no_good_count = 0
+        # snort no suricata no   bad 
+        if snort_overall_change ==False and suricata_overall_change==False:
+            #father_strategy.mutate_weight=math.ceil(father_strategy.mutate_weight/3) 
+            father_strategy.no_good_count+=1
+            logger.info('father_strategy no_good_count add, from %d to %d',father_strategy.no_good_count-1,father_strategy.no_good_count)
+            child_strategy.mutate_weight=0
+            logger.info('bad')
+            logger.info('parent mutate_weight:%d| child mutate_weight:%d',father_strategy.mutate_weight,child_strategy.mutate_weight)
+            handicap+=1
+
+        # add strategy
+        if child_strategy.saved_reason=='+' or child_strategy.saved_reason=='++':
+            child_strategy.handicap = handicap
+            chosen.append(copy.deepcopy(child_strategy))  
+            handicap-=1
+
+    
+   
+    for i in range(len(chosen)):
+        chosen[i].before_hash=copy.deepcopy(father_strategy.before_hash)
+        chosen[i].before_hash_name=copy.deepcopy(father_strategy.before_hash_name)
+        chosen[i].perf_score = calculate_score(chosen[i])
+            
+
+    logger.info('chosen length: %d',len(chosen))
+    
+
+    return chosen
 
 def get_unique_population_size(population):
     """
@@ -357,21 +1143,24 @@ def mutation_crossover(logger, population, hall, options):
     mutpb = options.get("mutation_pb", 0.5)
 
     offspring = copy.deepcopy(population)
-    for i in range(1, len(offspring), 2):
-        if random.random() < cxpb:
-            ind = offspring[i - 1]
-            actions.strategy.mate(ind, offspring[i], indpb=0.5)
-            offspring[i - 1].fitness, offspring[i].fitness = -1000, -1000
+    
+
 
     for i in range(len(offspring)):
-        recover_offspring_variable(offspring[i]) # 
+        recover_offspring_variable(offspring[i]) 
         if random.random() < mutpb:
 
             mutation_accepted = False
             while not mutation_accepted:
                 test_subject = copy.deepcopy(offspring[i])
+                test_subject.father_environment_id = offspring[i].environment_id 
                 mutate_individual(logger, test_subject)
-
+                test_subject_string=str(test_subject)
+                #if (test_subject_string.find('TCP:flags:replace:R')!=-1 and \
+                if ( \
+                    (test_subject_string.find('TCP:options-md5header:replace')!=-1 \
+                    or test_subject_string.find('TCP:options-timestamp:replace')!=-1)) and random.random() < 0.8:
+                    continue
                 # Pull out some metadata about this proposed mutation
                 fitness_history = hall.get(str(test_subject), [])
 
@@ -384,9 +1173,79 @@ def mutation_crossover(logger, population, hall, options):
                     mutation_accepted = False
                 else:
                     mutation_accepted = True
-
+            
             offspring[i] = test_subject
-            offspring[i].fitness = -1000
+            offspring[i].fitness =-1000
+            
+
+
+
+    return offspring
+
+def mutation_crossover_new(logger, task_sequence, hall, options, population):
+    """
+    Apply crossover and mutation on the offspring.
+
+    Hall is a copy of the hall of fame, used to accept or reject mutations.
+
+    Args:
+        logger (:obj:`logging.Logger`): A logger to log with
+        task_sequence (list): Task sequence of individuals
+        hall (dict): Current hall of fame
+        options (dict): Options to override settings. Accepted keys are:
+            "crossover_pb" (float): probability of crossover
+            "mutation_pb" (float): probability of mutation
+            "allowed_retries" (int): number of times a strategy is allowed to exist in the hall of fame.
+            "no_reject_empty" (bool): whether or not empty strategies should be rejected
+
+    Returns:
+        list: New population after mutation
+    """
+    cxpb = options.get("crossover_pb", 0.9) # before 6.3 0.9 prev 0.5
+    mutpb = options.get("mutation_pb", 0.9) # before 6.3 0.9 prev 0.5
+
+    offspring = copy.deepcopy(task_sequence)
+    
+    for i in range(1, len(offspring), 3):  
+       if random.random() < cxpb:
+           ind = offspring[i - 1]
+           mate_target=copy.deepcopy(population[random.randint(0,len(population)-1)])
+           actions.strategy.mate(ind, mate_target, logger,indpb=0.5) 
+           offspring[i - 1].fitness = -1000
+
+    for i in range(len(offspring)):
+        recover_offspring_variable(offspring[i]) 
+        if random.random() < mutpb:
+
+            mutation_accepted = False
+            while not mutation_accepted:
+                test_subject = copy.deepcopy(offspring[i])
+                test_subject.father_environment_id = offspring[i].environment_id  
+                mutate_individual(logger, test_subject)
+                #test_subject_string=str(test_subject)
+                ##if (test_subject_string.find('TCP:flags:replace:R')!=-1 and \
+                #if ( \
+                #    (test_subject_string.find('TCP:options-md5header:replace')!=-1 \
+                #    or test_subject_string.find('TCP:options-timestamp:replace')!=-1)) and random.random() < 0.8:
+                #    continue
+                # Pull out some metadata about this proposed mutation
+                fitness_history = hall.get(str(test_subject), [])
+
+                # If we've seen this strategy 10 times before and it has always failed,
+                # or if we have seen it 20 times already, or if it is an empty strategy,
+                # reject this mutation and get another
+                if len(fitness_history) >= 10 and all(fitness < 0 for fitness in fitness_history) or \
+                   len(fitness_history) >= options.get("allowed_retries", 20) or \
+                   (len(test_subject) == 0 and not options.get("no_reject_empty")):
+                    mutation_accepted = False
+                else:
+                    mutation_accepted = True
+            
+            offspring[i] = test_subject
+            offspring[i].fitness =-1000
+            
+
+
 
     return offspring
 
@@ -401,15 +1260,20 @@ def recover_offspring_variable(offspring):
     offspring.result_suricata = None
     offspring.can_process_packet_compare = False
     offspring.inconsistent_packet_num = 0
-    offspring.change_happened_packet_num=[]  # 
+    offspring.change_happened_packet_num=[] 
     offspring.terminate_by_server = False
     offspring.send_port_number = None
 
-    offspring.snort_state_change_overall_client=[]   # 
+    offspring.snort_state_change_overall_client=[]   
     offspring.snort_state_change_overall_server=[]
     offspring.suricata_state_change_overall=[]
     offspring.saved_reason=''
     offspring.first_added_time= 0 
+    offspring.has_child = False
+    offspring.was_fuzzed = False
+
+    
+
 
 def mutate_individual(logger, ind):
     """
@@ -467,9 +1331,9 @@ def write_generation(filename, population):
         # Write each individual to file
         for index, individual in enumerate(population):
             if index == len(population) - 1:
-                fd.write(str(individual))
+                fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' Cause_inconsistent:' + str(individual.inconsistent_packet_num) + ' Father_ID:' + str(individual.father_environment_id) + ' Cause_inconsistent:' + str(individual.father_inconsistent_packet_num))
             else:
-                fd.write(str(individual) + "\n")
+                fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' Cause_inconsistent:' + str(individual.inconsistent_packet_num) + ' Father_ID:' + str(individual.father_environment_id) + ' Cause_inconsistent:' + str(individual.father_inconsistent_packet_num) + "\n")
 
 def write_state_change(filename,population):
     """
@@ -484,23 +1348,27 @@ def write_state_change(filename,population):
         # Write each individual to file
         fd.write('length of population:' + str(len(population)) + '\n')
         for index, individual in enumerate(population):
-            fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' Cause_inconsistent:' + str(individual.father_inconsistent_packet_num)+ "\n")
+            fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' Father_ID:' + str(individual.father_environment_id) + ' Cause_inconsistent:' + str(individual.father_inconsistent_packet_num)+ "\n")
             result=individual.result_snort
             #print(individual.result_snort)
             #print(individual.result_suricata)
             if result !=None:
                 fd.write('Mutate_weight: ' + str(individual.mutate_weight) + '\n')
                 fd.write('father_suricata_state vs current_suricata_state\n')
-                fd.write(str(individual.father_suricata_state_change_overall)+'[useless]\n')
+                fd.write(str(individual.father_suricata_state_change_overall)+'\n')
                 fd.write(str(individual.suricata_state_change_overall)+'\n')
                 fd.write('father_snort_state vs current_snort_state\n')
                 fd.write('snort_state_client\n')
-                fd.write(str(individual.father_snort_state_change_overall_client)+'[useless]\n')
+                fd.write(str(individual.father_snort_state_change_overall_client)+'\n')
                 fd.write(str(individual.snort_state_change_overall_client)+'\n')
                 fd.write('snort_state_server\n')
-                fd.write(str(individual.father_snort_state_change_overall_server)+'[useless]\n')
+                fd.write(str(individual.father_snort_state_change_overall_server)+'\n')
                 fd.write(str(individual.snort_state_change_overall_server)+'\n')              
 
+
+
+
+            
 def write_next_generation_info(filename,population,gen):
     """
     Writes the state_change for a specific generation.
@@ -519,20 +1387,26 @@ def write_next_generation_info(filename,population,gen):
         first_added_time_analysis=[]
         saved_reason_analysis=[]
         no_good_count_analysis=[]
+        perf_score_analysis=[]
+        depth_analysis=[]
+        handicap_analysis=[]
 
         for index, individual in enumerate(population):
-            fd.write(str(individual) + ' ID:' + str(individual.environment_id)  )
+            fd.write(str(individual) + ' ID:' + str(individual.environment_id) + ' father_ID:' + str(individual.father_environment_id) )
             if individual.first_added_time == gen:
                 child_count+=1
                 fd.write(' NEW\n')
-                fd.write('mutate_weight:' +str(individual.mutate_weight)+' no_good_count:'+str(individual.no_good_count)+' saved_reason:'+ str(individual.saved_reason)+ ' \n' )
+                fd.write('perf_score:' + str(individual.perf_score)+' depth:' +str(individual.depth) + ' mutate_weight:' +str(individual.mutate_weight)+' no_good_count:'+str(individual.no_good_count)+' saved_reason:'+ str(individual.saved_reason)+ ' \n' )
             else:
                 fd.write(' \n')
-                fd.write('mutate_weight:' +str(individual.mutate_weight)+' no_good_count:'+str(individual.no_good_count)+ ' \n')
+                fd.write('perf_score:' + str(individual.perf_score)+' depth:' +str(individual.depth) + ' mutate_weight:' +str(individual.mutate_weight)+' no_good_count:'+str(individual.no_good_count)+ ' \n')
             mutate_weight_analysis.append(individual.mutate_weight)
             first_added_time_analysis.append(individual.first_added_time)
             saved_reason_analysis.append(individual.saved_reason)
             no_good_count_analysis.append(individual.no_good_count)
+            perf_score_analysis.append(individual.perf_score)
+            depth_analysis.append(individual.depth)
+            handicap_analysis.append(individual.handicap)
             #print(individual.result_snort)
             #print(individual.result_suricata)
             display_state=False
@@ -540,28 +1414,38 @@ def write_next_generation_info(filename,population,gen):
                 display_state=True
             if display_state:
                 fd.write('father_suricata_state vs current_suricata_state\n')
-                fd.write(str(individual.father_suricata_state_change_overall)+'[useless]\n')
+                fd.write(str(individual.father_suricata_state_change_overall)+'\n')
                 fd.write(str(individual.suricata_state_change_overall)+'\n')
                 fd.write('father_snort_state vs current_snort_state\n')
-                fd.write(str(individual.father_snort_state_change_overall_client)+'[useless]\n')
+                fd.write(str(individual.father_snort_state_change_overall_client)+'\n')
                 fd.write(str(individual.snort_state_change_overall_client)+'\n')
                 fd.write('&\n')
-                fd.write(str(individual.father_snort_state_change_overall_server)+'[useless]\n')
+                fd.write(str(individual.father_snort_state_change_overall_server)+'\n')
                 fd.write(str(individual.snort_state_change_overall_server)+'\n')
         # summarize
         fd.write('new add child:'+str(child_count)+'\n')
-        #mutate_weight_result=pd.value_counts(mutate_weight_analysis)
-        #first_added_time_result=pd.value_counts(first_added_time_analysis)
-        #saved_reason_result=pd.value_counts(saved_reason_analysis)
-        #no_good_count_result=pd.value_counts(no_good_count_analysis)
-        fd.write('mutate_weight:[useless]\n')
-        fd.write('\n')
-        fd.write('saved_reason:[useless]\n')
-        fd.write('\n')
-        fd.write('first_added_time:[useless]\n')
-        fd.write('\n')
-        fd.write('no_good_count:[useless]\n')
-        fd.write('\n')
+        mutate_weight_result=pd.value_counts(mutate_weight_analysis)
+        first_added_time_result=pd.value_counts(first_added_time_analysis)
+        saved_reason_result=pd.value_counts(saved_reason_analysis)
+        no_good_count_result=pd.value_counts(no_good_count_analysis)
+        perf_score_result=pd.value_counts(perf_score_analysis)
+        depth_result=pd.value_counts(depth_analysis)
+        handicap_result=pd.value_counts(handicap_analysis)
+        fd.write('mutate_weight:\n')
+        fd.write(str(mutate_weight_result)+'\n')
+        fd.write('saved_reason:\n')
+        fd.write(str(saved_reason_result)+'\n')
+        fd.write('first_added_time:\n')
+        fd.write(str(first_added_time_result)+'\n')
+        fd.write('no_good_count:\n')
+        fd.write(str(no_good_count_result)+'\n')
+        fd.write('perf_score:\n')
+        fd.write(str(perf_score_result)+'\n')
+        fd.write('depth:\n')
+        fd.write(str(depth_result)+'\n')
+        fd.write('handicap:\n')
+        fd.write(str(handicap_result)+'\n')
+
 
 def load_generation(logger, filename):
     """
@@ -624,7 +1508,7 @@ def initialize_population(logger, options, canary_id, disabled=None):
     # Generate random strategies
     population = []
 
-    for _ in range(options["population_size"]):
+    for _ in range(options["population_size"]): 
         p = generate_strategy(logger, options["in-trees"], options["out-trees"], options["in-actions"],
                               options["out-actions"], options["seed"], environment_id=canary_id,
                               disabled=disabled)
@@ -648,9 +1532,9 @@ def genetic_solve(logger, options, ga_evaluator):
     """
     # Directory to save off each generation so evolution can be resumed
     ga_generations_dir = os.path.join(actions.utils.RUN_DIRECTORY, "generations")
-    ga_success_dir = os.path.join(actions.utils.RUN_DIRECTORY, "success")
+    # Directory to save off each generation state_change so evolution can be resumed
     ga_state_change_dir = os.path.join(actions.utils.RUN_DIRECTORY, "state_changes")
-
+    ga_success_dir = os.path.join(actions.utils.RUN_DIRECTORY, "success")
     hall = {}
     canary_id = None
     if ga_evaluator and not options["no-canary"]:
@@ -665,30 +1549,99 @@ def genetic_solve(logger, options, ga_evaluator):
         elite_clones = []
         if options["seed"]:
             elite_clones = [actions.utils.parse(options["seed"], logger)]
-
-        # Evolution over given number of generations
-        for gen in range(options["num_generations"]):
-            # Debug printing
-            logger.info("="*(int(COLUMNS) - 25))
-            logger.info("Generation %d:", gen)
-
-            # Save current population pool
-            filename = os.path.join(ga_generations_dir, "generation" + str(gen) + ".txt")
-            write_generation(filename, population)
-
-            # To store the best individuals of this generation to print
+        # afl_mode
+        population = fitness_function(logger, population, ga_evaluator) # run the task first
+        gen = 0
+        filename = os.path.join(ga_generations_dir, "generation" + str(gen) + ".txt")
+        write_generation(filename, population)
+        while(True):
+            if(len(population)==0): break
+            gen+=1
             best_fit, best_ind = -10000, None
+            fuzz_time=0
+            strategy_index=0
+            prior_population=[]  # prior_queue 
+            current_seed_source='population'
+            while strategy_index < len(population):  
+                pickpb=random.random()
+                if len(prior_population)!=0 and pickpb < 0.66:  
+                    logger.info("seed picked from prior_population.") 
+                    current_seed_source='prior'
+                    population.append(copy.deepcopy(prior_population[0]))
+                    seed_ind = population[-1]
+                    seed_ind.was_fuzzed = True
+                    del prior_population[0]
+        
+                else:
+                    current_seed_source='population'
+                    logger.info("seed picked from population.") 
+                    seed_ind = population[strategy_index]
+                    strategy_index+=1
+                
+                if seed_ind.was_fuzzed == True and current_seed_source=='population':  
+                    logger.info("current item was_fuzzed") 
+                    continue
+                fuzz_time+=1
+                task_sequence = [copy.deepcopy(seed_ind) for x in range(math.ceil(seed_ind.perf_score/100))]   # seed's child
+                #offspring = mutation_crossover(logger, task_sequence, hall, options)
+                offspring = mutation_crossover_new(logger, task_sequence, hall, options,population)
+                # supplement source info based on 'current_seed_source'
+                for seed in offspring:
+                    if current_seed_source=='prior':
+                        seed.source_dict['prior']+=1
+                    else:
+                        seed.source_dict['population']+=1
+                # judge whether offspring should be added 
+                offspring = fitness_function(logger, offspring, ga_evaluator)
+                offspring = selection_next_generation_vertical_overall_afl_mode_new(logger, offspring, seed_ind, gen)
+                logger.info("add %d to structure",len(offspring))
+                if len(offspring) !=0:
+                    seed_ind.has_child = True # mark the seed_ind has child now
+                add2prior=0
+                add2pop=0
+                for new_ind in offspring:
+                    if new_ind.saved_reason == '++':
+                        prior_population.append(new_ind)
+                        add2prior+=1
+                    else:
+                        population.append(new_ind)
+                        add2pop+=1
+                logger.info("add %d to prior & add %d to population",add2prior,add2pop)
+                logger.info("current population length: %d",len(population))
+                logger.info("current population pointer: %d",strategy_index)
+                logger.info("current prior_population length: %d",len(prior_population))
 
-            # Mutation and crossover
-            offspring = mutation_crossover(logger, population, hall, options)
-            offspring += elite_clones
+                
 
-            # Calculate fitness
-            offspring = fitness_function(logger, offspring, ga_evaluator)
+                if fuzz_time%50==0:  
+                    best_fit, best_ind = -10000, None
+                    total_fitness=0
+                    # Iterate over the offspring to find the best individual for printing
+                    for ind in population:
+                        if ind.fitness is None and ga_evaluator:
+                            logger.error("No fitness for individual found: %s.", str(ind))
+                            continue
+                        total_fitness += ind.fitness
+                        if ind.fitness is not None and ind.fitness >= best_fit:
+                            best_fit = ind.fitness
+                            best_ind = ind
 
-            total_fitness = 0
+                    # Check if any individuals of this generation belong in the hall of fame
+                    hall = add_to_hof(hall, population)
+
+                    # Save current hall of fame
+                    filename = os.path.join(ga_generations_dir, "hall" + str(gen) +'_'+  str(fuzz_time) + ".txt")
+                    write_hall(filename, hall)
+                    filename = os.path.join(ga_state_change_dir, "state_change" + str(gen)+ '_'+  str(fuzz_time) + ".txt")
+                    write_state_change(filename,population)
+                    filename = os.path.join(ga_state_change_dir, "next_generation_info" + str(gen)+ '_'+ str(fuzz_time) + ".txt")
+                    write_next_generation_info(filename, population, gen)
+
+                 
+            
+            total_fitness=0
             # Iterate over the offspring to find the best individual for printing
-            for ind in offspring:
+            for ind in population:
                 if ind.fitness is None and ga_evaluator:
                     logger.error("No fitness for individual found: %s.", str(ind))
                     continue
@@ -698,27 +1651,20 @@ def genetic_solve(logger, options, ga_evaluator):
                     best_ind = ind
 
             # Check if any individuals of this generation belong in the hall of fame
-            hall = add_to_hof(hall, offspring)
+            hall = add_to_hof(hall, population)
 
             # Save current hall of fame
-            filename = os.path.join(ga_generations_dir, "hall" + str(gen) + ".txt")
+            filename = os.path.join(ga_generations_dir, "hall_" + str(gen) + "_summary.txt")
             write_hall(filename, hall)
+            filename = os.path.join(ga_state_change_dir, "state_change_" + str(gen)+ "_summary.txt")
+            write_state_change(filename,population)
 
-            # Status printing for this generation
-            logger.info("\nGeneration: %d | Unique Inviduals: %d | Avg Fitness: %d | Best Fitness [%s] %s: %s",
-                        gen, get_unique_population_size(population), round(total_fitness / float(len(offspring)), 2),
-                        best_ind.environment_id, str(best_fit), str(best_ind))
+            
+            population = list(filter(lambda x: x.no_good_count <=4 or (x.no_good_count<=8 and x.has_child ==False), population))
 
-            # Select next generation
-            population = selection_tournament(offspring, k=len(offspring) - options["elite_clones"], tournsize=10)
-            ga_state_change_dir = os.path.join(actions.utils.RUN_DIRECTORY, "state_changes")
-            write_state_change(filename, population)
-            filename = os.path.join(ga_state_change_dir, "next_generation_info" + str(gen)+ ".txt")
-            write_next_generation_info(filename,population,gen)
+            filename = os.path.join(ga_state_change_dir, "next_generation_info_" + str(gen)+ "_summary.txt")
+            write_next_generation_info(filename, population, gen)
 
-            # Add the elite clones
-            if options["elite_clones"] > 0:
-                elite_clones = [copy.deepcopy(best_ind) for x in range(options["elite_clones"])]
 
     # If the user interrupted, try to gracefully shutdown
     except KeyboardInterrupt:
@@ -948,6 +1894,7 @@ def driver(cmd):
                     args.population, args.in_trees, args.out_trees, args.in_actions, args.out_actions, args.generations)
 
         hall_of_fame = {}
+        strategy_hall={}   # type: flags:R options:md5header
         try:
             # Kick off the main genetic driver
             hall_of_fame = genetic_solve(logger, options, ga_evaluator)

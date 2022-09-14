@@ -180,6 +180,21 @@ class FragmentAction(Action):
         else:
             s += "{" + "ip" + ":"+ str(self.fragsize)  + ":" + str(self.correct_order) + ending
         return s
+    
+    def str_without_value(self):
+        """
+        Returns a string representation without the fragsize
+        """
+        s = Action.__str__(self)
+        if not self.overlap:
+            ending = "}"
+        else:
+            ending = ":" + str(self.overlap) + "}"
+        if self.segment:
+            s += "{" + "tcp" + ":" + str(self.correct_order) + ending
+        else:
+            s += "{" + "ip" + ":"  + str(self.correct_order) + ending
+        return s
 
     def parse(self, string, logger):
         """

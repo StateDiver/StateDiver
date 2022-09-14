@@ -21,7 +21,8 @@ import urllib.request
 
 import requests
 
-socket.setdefaulttimeout(1)
+#socket.setdefaulttimeout(1)
+socket.setdefaulttimeout(3)
 
 import engine
 import external_sites
@@ -140,14 +141,38 @@ class HTTPPluginRunner(Plugin):
         with engine.Engine(port, args.get("strategy", ""), server_side=args["server_side"], environment_id=environment["id"], output_directory=output_path, log_level=args.get("log", "debug"), enabled=args["server_side"], forwarder=forwarder) as eng:
             with TestServer(site_to_test, evaluator, environment, logger) as site_to_test:
                 evaluator.client_args.update({"server" : site_to_test})
+                tick0=time.time()
                 fitness = evaluator.run_client(evaluator.client_args, environment, logger)
+                tick1=time.time()
+                print("http plugin run_client time spend:",tick1-tick0)
 
             evaluator.read_fitness(ind)
-
             # If the engine ran on the server side, ask that it punish fitness
             if args["server_side"]:
                 ind.fitness = actions.utils.punish_fitness(fitness, logger, eng)
                 actions.utils.write_fitness(ind.fitness, output_path, environment["id"])
+
+#        with engine.Engine(port, args.get("strategy", ""), server_side=args["server_side"], environment_id=environment["id"], output_directory=output_path, log_level=args.get("log", "debug"), enabled=args["server_side"], forwarder=forwarder) as eng:
+#            with TestServer(site_to_test, evaluator, environment, logger) as site_to_test:
+        # evaluator.client_args.update({"server" : site_to_test})
+        # tick0=time.time()
+        # fitness = evaluator.run_client(evaluator.client_args, environment, logger)
+        # tick1=time.time()
+        # print("http plugin run_client time spend:",tick1-tick0)
+
+        evaluator.read_fitness(ind)
+        # If the engine ran on the server side, ask that it punish fitness
+        if args["server_side"]:
+            ind.fitness = actions.utils.punish_fitness(fitness, logger, eng)
+            actions.utils.write_fitness(ind.fitness, output_path, environment["id"])
+
+        
+        # for test
+        # tick0=time.time()
+        # fitness = evaluator.run_client(evaluator.client_args, environment, logger)
+        # tick1=time.time()
+        # print("http plugin run_client time spend:",tick1-tick0)
+        # evaluator.read_fitness(ind)        
 
         if evaluator.server_cls and not evaluator.args.get("external_server") and not evaluator.act_as_middlebox:
             evaluator.stop_server(environment, server)
