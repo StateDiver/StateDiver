@@ -31,11 +31,7 @@ For the convenience of description, we use Snort and Suricata as examples to ill
 * root privilege (for sending raw packets)
 * VMs locally(VMware Workstation or VirtualBox) with Shared Folder mode (for passing state-discrepancy guidance) and Promiscuous Mode on.
 
-
-### Setup
-
-
-#### Build DPIs
+### Build DPIs
 
 
 #### 1. Snort
@@ -66,9 +62,9 @@ For the convenience of description, we use Snort and Suricata as examples to ill
 
 
 
-#### 3. VMs‘ settings 
+#### 3. Others
 
-**Dependencies**
+**StateDiver dependencies**
 
 StateDiver has been developed and tested for Ubuntu. Due to limitations of netfilter and raw sockets, It works on Linux and requires *python3.6*.
 
@@ -131,7 +127,7 @@ The network topology is as follows:
 
 ## Run the test
 
-1. Start DPIs
+### 1. Start DPIs
 
 Run Snort in VM2:
 ```
@@ -149,7 +145,7 @@ cd suricata-6.0.3-state-instrumentation
 stdbuf -oL ./src/suricata -c ./suricata-ids-share.yaml -i interface > /mnt/hgfs/share-folders/suricata-log/console.log
 ```
 
-2. Start StateDiver
+### 2. Start StateDiver
 
 Run StateDiver in VM1:
 ```
@@ -159,12 +155,12 @@ cd StateDiver
 python3 evolve.py --population 50 --generations 50 --test-type http --server server_IP --bad-word ultrasurf.html --port 80 --log-on-success True
 ```
 
-## Analyze the result & Verify the strategy
-The result are shown in ./trials/xxxx-xx-xx_xx:xx:xx/success. 
+## Analyze & Verify the strategy
+The possible success strategies are shown in ./trials/xxxx-xx-xx_xx:xx:xx/success. 
 
 xxxx-xx-xx_xx:xx:xx represents the time when you perform the test.
 
-the `success` folder contains two types of files. All successful strategies are shown in the `ga_summary`. The remaining files are named with the strategy ID in `ga_summary`. These files show detailed log information when the respective strategies are performed.
+the `success` folder contains two types of files. All possible successful strategies are shown in the `ga_summary`. The remaining files are named with the strategy ID in `ga_summary`. These files show detailed log information when the respective strategies are performed.
 
 We need replays and manual efforts to determine if this is a new strategy.
 
