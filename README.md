@@ -134,7 +134,7 @@ Run Snort in VM2:
 export SNORT_PP_DEBUG=0x00040000LL
 iptables -I FORWARD -j NFQUEUE --queue-num=2
 cd snort-2.9.19-state-instrumentation
-stdbuf -oL ./src/snort -Q -c .etc/snort-ips-share.conf -A fast > /mnt/hgfs/share-folders/snort-log/console.log
+stdbuf -oL ./src/snort -Q -c ./etc/snort-ips-share.conf -A fast > /mnt/hgfs/share-folders/snort-log/console.log
 ```
 
 Run Suricata in VM3:
