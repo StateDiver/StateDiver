@@ -123,6 +123,86 @@ The network topology is as follows:
                   （Promiscuous Mode）
 ```
 
+4. To build this network topology right (with VirtualBox), here is an example.
+
+VM1(StateDiver);
+
+ens33: 192.168.234.146   [NAT mode in VirtualBox]
+
+ens38: 192.168.111.128   [Host-only in VirtualBox] 
+
+lo: 127.0.0.1
+
+VM2 (Snort);
+
+ens33: 192.168.234.147 [NAT mode in VirtualBox]
+
+ens38: 192.168.111.129 [Host-only in VirtualBox]
+
+ens39: 192.168.112.128 [Host-only in VirtualBox]
+
+lo: 127.0.0.1
+
+VM3 (Suricata);
+
+ens33: 192.168.234.148 [NAT mode in VirtualBox]
+
+ens38: 192.168.111.134 [Host-only in VirtualBox]
+
+ens39: 192.168.112.135 [Host-only in VirtualBox]
+
+lo: 127.0.0.1
+
+VM4 (Server);
+
+ens33: 192.168.234.149 [NAT mode in VirtualBox]
+
+ens38: 192.168.112.134 [Host-only in VirtualBox]
+
+lo: 127.0.0.1
+
+To change network mode of network adapters (e.g., NAT, Host-only) in VirtualBox, go to Settings-> Network -> Attached to. For Host-only mode, please make sure ens38(VM1), ens38(VM2), and ens38(VM3) use the same Host-only Ethernet Adapter, ens39(VM2), ens39(VM3), and ens38(VM4) use another Host-only Ethernet Adapter.
+
+**Configuration**
+
+4.1 First, disable all ens33 with `$ ifconfig ens33 down`.
+
+4.2 In VM1(StateDiver):
+```
+$ route add -host 192.168.112.134 gw 192.168.111.129 
+```
+In VM4(Server):
+```
+$ route add -host 192.168.111.128 gw 192.168.112.128
+```
+4.3 Enable VM3's ens38 & ens39 Promiscuous Mode
+
+In VirtualBox, go to Settings-> Network -> Advanced -> Promiscuous Mode, choose "allow all". (may need to reboot)
+
+
+5. To verify that everything works, check the following.
+
+5.1 Run Snort & Suricata in VM2 & VM3;
+
+5.2 Enable Wireshark in VM2 and VM3 with `$ sudo wireshark`, choose ens38 and inspect tcp packets.
+
+5.3
+In VM1(StateDiver):
+```
+$ iptables -F
+$ curl server_ip/ultrasurf.html
+```
+5.4 You should see the following:
+
+5.4.1 Same tcp packets appear in VM2's  and VM3's wireshark.
+
+5.4.2 VM1's `curl` command shows "Connection reset by peer".  (means packets go through Snort and Snort blocks it)
+
+5.4.3 Logs appear in shared folder.
+
+
+
+
 
 
 ## Run the test
