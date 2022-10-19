@@ -1,3 +1,6 @@
+# Notice
+This project has been shifted to [CGCL-codes](https://github.com/CGCL-codes/StateDiver) and will be no longer maintained. Plese check there :)
+
 # StateDiver
 StateDiver is a tool that detects TCP-based bypassing strategies in DPI systems by utilizing the state discrepancy to guide the fuzzing process.  StateDiver can be used to uncover DPI elusion strategies in various open-source DPI systems (e.g., Snort, Snort++, and Suricata).
 
